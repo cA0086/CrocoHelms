@@ -581,7 +581,8 @@ function ModelInstallerCard({ systemTier, onInstallComplete }) {
 
 function App() {
   const [onlineStatus, setOnlineStatus] = useState("CONNECTING");
-  const [config, setConfig] = useState({ downloader: "none" });
+  const [config, setConfig] = useState({ downloader: "none", update_token_required: false });
+  const [versionInfo, setVersionInfo] = useState({ current: "unknown", latest: "unknown", updateAvailable: false });
   const [fsTree, setFsTree] = useState([]);
   const [tab, setTab] = useState("files");
   const [selectedPath, setSelectedPath] = useState(null);
@@ -734,6 +735,7 @@ function App() {
 
   useEffect(() => {
     fetch("/api/config").then((r) => r.json()).then((cfg) => setConfig(cfg)).catch(() => toast("Failed to load backend config"));
+    fetch("/api/version").then((r) => r.json()).then((v) => setVersionInfo(v)).catch(() => setVersionInfo({ current: "unknown", latest: "unknown", updateAvailable: false }));
     fetchTree();
     
     // Initial fetch for storage
@@ -743,12 +745,16 @@ function App() {
       fetch("/api/status").then((r) => r.json()).then((d) => { setOnlineStatus("online"); setDlState(d.downloads || {}); }).catch(() => { setOnlineStatus("offline"); });
     }, 1500);
 
+    const versionInterval = setInterval(() => {
+      fetch("/api/version").then((r) => r.json()).then((v) => setVersionInfo(v)).catch(() => {});
+    }, 3600000);
+
     // Check storage every 15 seconds
     const storageInterval = setInterval(() => {
       fetch("/api/storage").then(r => r.json()).then(setStorageData).catch(console.error);
     }, 15000);
 
-    return () => { clearInterval(interval); clearInterval(storageInterval); };
+    return () => { clearInterval(interval); clearInterval(versionInterval); clearInterval(storageInterval); };
   }, []);
 
   const fetchTree = () => {
@@ -1080,14 +1086,17 @@ function App() {
           <div className={`status-dot ${onlineStatus}`} title={`Status: ${onlineStatus}`} />
         </div>
         <div className="topbar-right">
+          <div className="version-badge" title={`Current: ${versionInfo.current} / Latest: ${versionInfo.latest}`}>
+            {versionInfo.updateAvailable ? "Update ready" : "Version " + versionInfo.current}
+          </div>
           <button
-            className="update-btn"
+            className={`update-btn${versionInfo.updateAvailable ? " available" : ""}`}
             onClick={handleUpdate}
             disabled={["checking", "updating", "restarting"].includes(updateState.status)}
             title={updateState.message || "Pull latest GitHub code and restart this EC2 app"}
           >
             <SvgIcon name="ti-refresh" />
-            {updateState.status === "checking" ? "Checking..." : updateState.status === "updating" ? "Updating..." : updateState.status === "restarting" ? "Restarting..." : "GitHub Update"}
+            {updateState.status === "checking" ? "Checking..." : updateState.status === "updating" ? "Updating..." : updateState.status === "restarting" ? "Restarting..." : versionInfo.updateAvailable ? "Update & Restart" : "GitHub Update"}
           </button>
           {Object.values(dlState).filter(d => (d.status || "").toLowerCase() === "downloading").map(d => (
             <DlCard key={d.id} d={d} onCancel={cancelDl} />
