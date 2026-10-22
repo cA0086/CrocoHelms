@@ -166,7 +166,11 @@ def update_worker(job_id):
         release_data = get_github_release_data()
         latest = release_data.get("tag_name")
         if not latest:
-            raise RuntimeError("No GitHub release or tag was available to update from.")
+            lookup_error = release_data.get("error")
+            message = "No GitHub release or tag was available to update from."
+            if lookup_error:
+                message = f"{message} GitHub lookup error: {lookup_error}"
+            raise RuntimeError(message)
         job["latest_tag"] = latest
 
         job["step"] = "fetching git refs"
@@ -198,11 +202,22 @@ def update_worker(job_id):
     except Exception as exc:
         job["state"] = "failed"
         job["step"] = job.get("step", "failed")
-        job["error"] = str(exc)
+        error_message = str(exc).strip() or repr(exc)
+        if isinstance(exc, subprocess.CalledProcessError):
+            command_output = (exc.stderr or exc.stdout or "").strip()
+            if command_output and command_output not in error_message:
+                error_message = f"{error_message}\n{command_output}"
+        job["error"] = error_message
+        print(f"[CrocoHelms updater] Failed during {job['step']}: {error_message}", file=sys.stderr, flush=True)
         try:
             subprocess.run(["git", "checkout", "--detach", previous_commit], cwd=REPO_DIR, check=True, capture_output=True, text=True)
-        except Exception:
-            pass
+        except Exception as rollback_error:
+            rollback_message = str(rollback_error).strip() or repr(rollback_error)
+            if isinstance(rollback_error, subprocess.CalledProcessError):
+                command_output = (rollback_error.stderr or rollback_error.stdout or "").strip()
+                if command_output and command_output not in rollback_message:
+                    rollback_message = f"{rollback_message}\n{command_output}"
+            print(f"[CrocoHelms updater] Rollback failed: {rollback_message}", file=sys.stderr, flush=True)
     finally:
         job["updated_at"] = time.time()
         UPDATE_LOCK.release()
