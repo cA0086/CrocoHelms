@@ -1067,10 +1067,10 @@ function App() {
             className="update-btn"
             onClick={handleUpdate}
             disabled={["checking", "updating", "restarting"].includes(updateState.status)}
-            title={updateState.message || "Check GitHub for updates"}
+            title={updateState.message || "Pull latest GitHub code and restart this EC2 app"}
           >
             <SvgIcon name="ti-refresh" />
-            {updateState.status === "checking" ? "Checking..." : updateState.status === "updating" ? "Updating..." : updateState.status === "restarting" ? "Restarting..." : "Update"}
+            {updateState.status === "checking" ? "Checking..." : updateState.status === "updating" ? "Updating..." : updateState.status === "restarting" ? "Restarting..." : "GitHub Update"}
           </button>
           {Object.values(dlState).filter(d => (d.status || "").toLowerCase() === "downloading").map(d => (
             <DlCard key={d.id} d={d} onCancel={cancelDl} />
