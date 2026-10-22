@@ -1107,7 +1107,7 @@ function App() {
             title={updateState.message || "Pull latest GitHub code and restart this EC2 app"}
           >
             <SvgIcon name="ti-refresh" />
-            {updateState.status === "checking" ? "Checking..." : updateState.status === "updating" ? "Updating..." : updateState.status === "restarting" ? "Restarting..." : versionInfo.updateAvailable ? "Update & Restart" : "GitHub Update Test 3"}
+            {updateState.status === "checking" ? "Checking..." : updateState.status === "updating" ? updateState.message || "Updating..." : updateState.status === "restarting" ? "Restarting..." : versionInfo.updateAvailable ? "Update & Restart" : "GitHub Update"}
           </button>
           {Object.values(dlState).filter(d => (d.status || "").toLowerCase() === "downloading").map(d => (
             <DlCard key={d.id} d={d} onCancel={cancelDl} />
