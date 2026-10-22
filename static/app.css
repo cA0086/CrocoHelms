@@ -95,6 +95,24 @@ input, textarea, button { font-family: inherit; color: inherit; }
   gap: 12px;
 }
 
+.update-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  background: var(--bg-base);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.update-btn:hover:not(:disabled) { color: var(--text-main); border-color: var(--border-focus); }
+.update-btn:disabled { cursor: wait; opacity: 0.65; }
+
 /* ─── CUSTOM DOWNLOAD BAR ────────────────────────────────────── */
 .dl-card {
   background: transparent;

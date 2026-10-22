@@ -7,6 +7,9 @@ import os
 import io
 import zipfile
 import mimetypes
+import subprocess
+import sys
+import threading
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, unquote
@@ -20,8 +23,11 @@ from core.uploader import handle_upload
 
 # Track installation status globally
 install_status = {"status": "idle", "progress": 0, "error": None}
+update_status = {"status": "idle", "message": ""}
+UPDATE_LOCK = threading.Lock()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_DIR = Path(BASE_DIR).parent
 MODELS_DIR = os.path.join(BASE_DIR, "vm_manager", "models")
 MODEL_PATH = os.path.join(MODELS_DIR, "qwen2.5-0.5b-instruct-q4_k_m.gguf")
 MODEL_URL = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
@@ -41,6 +47,59 @@ def download_worker():
         install_status = {"status": "completed", "progress": 100, "error": None}
     except Exception as e:
         install_status = {"status": "failed", "progress": 0, "error": str(e)}
+
+def restart_application(server):
+    server.shutdown()
+    server.server_close()
+    subprocess.Popen([sys.executable, str(REPO_DIR / "main.py")], cwd=str(REPO_DIR))
+    os._exit(0)
+
+def update_worker(server):
+    global update_status
+    try:
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=REPO_DIR, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        if dirty:
+            raise RuntimeError("Local tracked changes found. Commit or stash them before updating.")
+
+        upstream = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            cwd=REPO_DIR, text=True, stderr=subprocess.STDOUT,
+        ).strip()
+        if not upstream.startswith("origin/"):
+            raise RuntimeError("This branch is not tracking an origin branch.")
+
+        update_status = {"status": "checking", "message": "Checking GitHub for updates..."}
+        subprocess.run(["git", "fetch", "origin"], cwd=REPO_DIR, check=True, capture_output=True, text=True)
+        counts = subprocess.check_output(
+            ["git", "rev-list", "--left-right", "--count", f"HEAD...{upstream}"],
+            cwd=REPO_DIR, text=True, stderr=subprocess.STDOUT,
+        ).split()
+        local_commits, remote_commits = map(int, counts)
+        if local_commits:
+            raise RuntimeError("This clone has unpublished local commits. Push or remove them before updating.")
+        if remote_commits == 0:
+            update_status = {"status": "current", "message": "CrocoHelms is already up to date."}
+            return
+
+        update_status = {"status": "updating", "message": f"Installing {remote_commits} update(s)..."}
+        subprocess.run(
+            ["git", "merge", "--ff-only", upstream],
+            cwd=REPO_DIR, check=True, capture_output=True, text=True,
+        )
+        update_status = {"status": "restarting", "message": "Update installed. Restarting CrocoHelms..."}
+        timer = threading.Timer(2.5, restart_application, args=(server,))
+        timer.daemon = True
+        timer.start()
+    except Exception as e:
+        update_status = {"status": "error", "message": str(e)}
+    finally:
+        UPDATE_LOCK.release()
+
+def is_local_request(handler):
+    return handler.client_address[0] in ("127.0.0.1", "::1")
 
 def get_tree(force=False):
     """Thread-safe filesystem tree retrieval with caching."""
@@ -107,6 +166,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, "text/plain", "Logo asset not found.")
 
         # ── API ENDPOINTS ──
+        elif p == "/api/update-status":
+            if not is_local_request(self):
+                self._json({"message": "Updates can only be managed from this device."}, 403)
+            else:
+                self._json(update_status)
+
         elif p == "/api/config":
             self._json({"downloader": config.DOWNLOADER or "none"})
 
@@ -198,7 +263,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         import threading
+        global update_status
         p = self.path.split("?")[0]
+
+        if p == "/api/update":
+            expected_origin = f"http://{self.headers.get('Host', '')}"
+            if not is_local_request(self) or self.headers.get("Origin") != expected_origin:
+                self._json({"error": "Updates can only be started from this device."}, 403)
+                return
+            if not UPDATE_LOCK.acquire(blocking=False):
+                self._json({"error": "An update is already in progress."}, 409)
+                return
+            if update_status["status"] in ("checking", "updating", "restarting"):
+                UPDATE_LOCK.release()
+                self._json({"error": "An update is already in progress."}, 409)
+                return
+            update_status = {"status": "checking", "message": "Checking GitHub for updates..."}
+            threading.Thread(target=update_worker, args=(self.server,), daemon=True).start()
+            self._json({"ok": True}, 202)
+            return
 
         # 1. Multi-part form-data bypasses standard JSON reading loops
         if p == "/api/upload":
