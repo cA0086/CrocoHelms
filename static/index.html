@@ -700,6 +700,7 @@ function App() {
 
       let sawRestart = false;
       let disconnected = false;
+      let restartStartedAt = 0;
       for (let attempt = 0; attempt < 180; attempt += 1) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         try {
@@ -725,7 +726,14 @@ function App() {
           }
           if (status.state === "success") {
             sawRestart = true;
+            if (!restartStartedAt) restartStartedAt = Date.now();
             setUpdateState({ status: "restarting", message: "Update installed. Reconnecting..." });
+            if (Date.now() - restartStartedAt >= 30000) {
+              const message = "Update installed, but the service did not restart. Check the crocohelms.service journal.";
+              setUpdateState({ status: "error", message });
+              toast(message);
+              return;
+            }
           } else if (["queued", "running"].includes(status.state)) {
             setUpdateState({ status: "updating", message: status.step || "Updating..." });
           }

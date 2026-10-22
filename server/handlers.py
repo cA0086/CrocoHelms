@@ -140,13 +140,12 @@ def run_command(args, cwd=REPO_DIR, env=None):
 def restart_service():
     cmd = ["systemd-run", "--no-block", "systemctl", "restart", config.SERVICE_NAME]
     try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        fallback = ["nohup", "systemctl", "restart", config.SERVICE_NAME]
-        try:
-            subprocess.Popen(fallback, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except Exception as exc:
+        raise RuntimeError(f"Could not schedule service restart: {exc}") from exc
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit code {proc.returncode}"
+        raise RuntimeError(f"Could not schedule service restart: {detail}")
 
 
 def update_worker(job_id):
