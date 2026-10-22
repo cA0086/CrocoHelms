@@ -696,6 +696,7 @@ function App() {
       const response = await fetch("/api/update", { method: "POST", headers });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Could not start update.");
+      if (!result.jobId) throw new Error("The server did not return an update job ID.");
 
       let sawRestart = false;
       let disconnected = false;
@@ -706,19 +707,29 @@ function App() {
           if (token) {
             statusHeaders["X-Update-Token"] = token;
           }
-          const statusResponse = await fetch("/api/update-status", { headers: statusHeaders });
+          const statusResponse = await fetch(`/api/update-status?job=${encodeURIComponent(result.jobId)}`, { headers: statusHeaders });
+          if (!statusResponse.ok) {
+            if (sawRestart || statusResponse.status === 404) {
+              window.location.reload();
+              return;
+            }
+            const statusError = await statusResponse.json();
+            throw new Error(statusError.error || statusError.message || "Could not read update status.");
+          }
           const status = await statusResponse.json();
-          setUpdateState(status);
-          if (status.status === "current") {
-            toast(status.message);
+          if (status.state === "failed") {
+            const message = status.error || "Update failed.";
+            setUpdateState({ status: "error", message });
+            toast(message);
             return;
           }
-          if (status.status === "error") {
-            toast(status.message);
-            return;
+          if (status.state === "success") {
+            sawRestart = true;
+            setUpdateState({ status: "restarting", message: "Update installed. Reconnecting..." });
+          } else if (["queued", "running"].includes(status.state)) {
+            setUpdateState({ status: "updating", message: status.step || "Updating..." });
           }
-          if (status.status === "restarting") sawRestart = true;
-          if (sawRestart && disconnected && status.status === "idle") {
+          if (sawRestart && disconnected) {
             window.location.reload();
             return;
           }
