@@ -208,6 +208,14 @@ def update_worker(job_id):
         UPDATE_LOCK.release()
 
 
+def is_local_request(handler):
+    ip = handler.client_address[0]
+    if ip in ("127.0.0.1", "::1"):
+        return True
+    host = (handler.headers.get("Host") or "").lower()
+    return host.startswith("localhost:") or host.startswith("127.0.0.1:") or host.startswith("[::1]:") or host.startswith("0.0.0.0:")
+
+
 def has_valid_update_token(handler):
     expected = (config.UPDATE_TOKEN or "").strip()
     if not expected:
@@ -256,7 +264,7 @@ class Handler(BaseHTTPRequestHandler):
         for h, v in [
             ("Access-Control-Allow-Origin", "*"),
             ("Access-Control-Allow-Methods", "GET,POST,OPTIONS"),
-            ("Access-Control-Allow-Headers", "Content-Type")
+            ("Access-Control-Allow-Headers", "Content-Type,X-Update-Token,X-CSRF-Token")
         ]:
             self.send_header(h, v)
         self.end_headers()
@@ -290,11 +298,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, "text/plain", "Logo asset not found.")
 
         # ── API ENDPOINTS ──
+        elif p == "/api/version":
+            self._json(get_version_payload())
+
         elif p == "/api/update-status":
+            job_id = params.get("job", [None])[0]
+            if job_id:
+                payload = get_update_job(job_id)
+                if payload is None:
+                    self._json({"state": "idle", "step": "unknown", "log": [], "error": "No such job."}, 404)
+                    return
+                self._json(payload)
+                return
+
             if not (is_local_request(self) or has_valid_update_token(self)):
                 self._json({"message": "Updates require a valid update token."}, 403)
             else:
-                self._json(update_status)
+                self._json({"state": "idle", "step": "idle", "log": [], "error": None})
 
         elif p == "/api/config":
             self._json({
@@ -391,7 +411,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         import threading
-        global update_status
         p = self.path.split("?")[0]
 
         if p == "/api/update":
@@ -401,13 +420,11 @@ class Handler(BaseHTTPRequestHandler):
             if not UPDATE_LOCK.acquire(blocking=False):
                 self._json({"error": "An update is already in progress."}, 409)
                 return
-            if update_status["status"] in ("checking", "updating", "restarting"):
-                UPDATE_LOCK.release()
-                self._json({"error": "An update is already in progress."}, 409)
-                return
-            update_status = {"status": "checking", "message": "Checking GitHub for updates..."}
-            threading.Thread(target=update_worker, args=(self.server,), daemon=True).start()
-            self._json({"ok": True}, 202)
+
+            job_id = str(uuid.uuid4())
+            UPDATE_JOBS[job_id] = {"state": "queued", "step": "queued", "log": [], "error": None}
+            threading.Thread(target=update_worker, args=(job_id,), daemon=True).start()
+            self._json({"jobId": job_id, "ok": True}, 202)
             return
 
         # 1. Multi-part form-data bypasses standard JSON reading loops
