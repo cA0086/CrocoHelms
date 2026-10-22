@@ -7,6 +7,7 @@ import os
 import io
 import zipfile
 import mimetypes
+import re
 import subprocess
 import sys
 import threading
