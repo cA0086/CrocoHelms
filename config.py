@@ -4,10 +4,17 @@ import subprocess
 
 PORT = 8765
 HOST = "0.0.0.0"
+APP_DIR = os.path.abspath(os.path.dirname(__file__))
+GITHUB_OWNER = "cA0086"
+GITHUB_REPO = "CrocoHelms"
+GITHUB_REPO_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}.git"
+SERVICE_NAME = os.environ.get("CROCOHEMS_SERVICE_NAME", "crocohelms.service")
+UPDATE_ENABLED = os.environ.get("CROCOHEMS_UPDATE_ENABLED", "true").lower() not in {"0", "false", "no"}
+UPDATE_TOKEN = os.environ.get("CROCOHEMS_UPDATE_TOKEN", "change-me")
+UPDATE_CACHE_SECONDS = 600
 
 # Set this to a strong secret on the EC2 instance, then keep the same value in the local UI.
 # Example: export CROCOHEMS_UPDATE_TOKEN="my-long-random-token"
-UPDATE_TOKEN = os.environ.get("CROCOHEMS_UPDATE_TOKEN", "change-me")
 
 SCAN_ROOTS = ["/workspace", "/root", "/home", "/opt", "/data", "/mnt", "/tmp"]
 

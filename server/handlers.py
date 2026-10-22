@@ -23,8 +23,9 @@ from core.uploader import handle_upload
 
 # Track installation status globally
 install_status = {"status": "idle", "progress": 0, "error": None}
-update_status = {"status": "idle", "message": ""}
 UPDATE_LOCK = threading.Lock()
+UPDATE_JOBS = {}
+VERSION_CACHE = {"fetched_at": 0, "data": None}
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = Path(BASE_DIR).parent
@@ -32,88 +33,196 @@ MODELS_DIR = os.path.join(BASE_DIR, "vm_manager", "models")
 MODEL_PATH = os.path.join(MODELS_DIR, "qwen2.5-0.5b-instruct-q4_k_m.gguf")
 MODEL_URL = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 
-def download_worker():
-    global install_status
+SEMVER_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$")
+
+
+def parse_semver(tag):
+    if not tag:
+        return None
+    tag = tag.strip()
+    match = SEMVER_RE.match(tag)
+    if not match:
+        return None
+    major, minor, patch, prerelease, build = match.groups()
+    return (int(major), int(minor), int(patch), prerelease or "", build or "")
+
+
+def compare_versions(left, right):
+    left_v = parse_semver(left)
+    right_v = parse_semver(right)
+    if left_v is None and right_v is None:
+        return 0
+    if left_v is None:
+        return -1
+    if right_v is None:
+        return 1
+    if left_v[:3] != right_v[:3]:
+        return (left_v[:3] > right_v[:3]) - (left_v[:3] < right_v[:3])
+    if left_v[3] == right_v[3]:
+        return 0
+    if left_v[3] == "":
+        return 1
+    if right_v[3] == "":
+        return -1
+    return (left_v[3] > right_v[3]) - (left_v[3] < right_v[3])
+
+
+def get_current_git_version():
     try:
-        os.makedirs(MODELS_DIR, exist_ok=True)
-        install_status = {"status": "downloading", "progress": 0, "error": None}
-        
-        def report_hook(block_num, block_size, total_size):
-            if total_size > 0:
-                progress = int((block_num * block_size / total_size) * 100)
-                install_status["progress"] = min(progress, 99)
-
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH, reporthook=report_hook)
-        install_status = {"status": "completed", "progress": 100, "error": None}
-    except Exception as e:
-        install_status = {"status": "failed", "progress": 0, "error": str(e)}
-
-def restart_application(server):
-    server.shutdown()
-    server.server_close()
-    subprocess.Popen([sys.executable, str(REPO_DIR / "main.py")], cwd=str(REPO_DIR))
-    os._exit(0)
-
-def update_worker(server):
-    global update_status
+        tag = subprocess.check_output(["git", "describe", "--tags", "--abbrev=0"], cwd=REPO_DIR, stderr=subprocess.DEVNULL, text=True).strip()
+        if tag:
+            return tag
+    except subprocess.CalledProcessError:
+        pass
     try:
-        dirty = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=REPO_DIR, capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        if dirty:
-            raise RuntimeError("Local tracked changes found. Commit or stash them before updating.")
+        sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_DIR, text=True).strip()
+        if sha:
+            return sha
+    except Exception:
+        return "unknown"
+    return "unknown"
 
-        upstream = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-            cwd=REPO_DIR, text=True, stderr=subprocess.STDOUT,
-        ).strip()
-        if not upstream.startswith("origin/"):
-            raise RuntimeError("This branch is not tracking an origin branch.")
 
-        update_status = {"status": "checking", "message": "Checking GitHub for updates..."}
-        subprocess.run(["git", "fetch", "origin"], cwd=REPO_DIR, check=True, capture_output=True, text=True)
-        counts = subprocess.check_output(
-            ["git", "rev-list", "--left-right", "--count", f"HEAD...{upstream}"],
-            cwd=REPO_DIR, text=True, stderr=subprocess.STDOUT,
-        ).split()
-        local_commits, remote_commits = map(int, counts)
-        if local_commits:
-            raise RuntimeError("This clone has unpublished local commits. Push or remove them before updating.")
-        if remote_commits == 0:
-            update_status = {"status": "current", "message": "CrocoHelms is already up to date."}
-            return
+def get_github_release_data():
+    global VERSION_CACHE
+    now = time.time()
+    if VERSION_CACHE["data"] is not None and (now - VERSION_CACHE["fetched_at"]) < config.UPDATE_CACHE_SECONDS:
+        return VERSION_CACHE["data"]
 
-        update_status = {"status": "updating", "message": f"Installing {remote_commits} update(s)..."}
-        subprocess.run(
-            ["git", "merge", "--ff-only", upstream],
-            cwd=REPO_DIR, check=True, capture_output=True, text=True,
-        )
-        update_status = {"status": "restarting", "message": "Update installed. Restarting CrocoHelms..."}
-        timer = threading.Timer(2.5, restart_application, args=(server,))
-        timer.daemon = True
-        timer.start()
-    except Exception as e:
-        update_status = {"status": "error", "message": str(e)}
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "CrocoHelms-Updater"}
+    url = f"https://api.github.com/repos/{config.GITHUB_OWNER}/{config.GITHUB_REPO}/releases/latest"
+    latest = {"tag_name": None, "error": None}
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            latest["tag_name"] = payload.get("tag_name")
+    except Exception as exc:
+        latest["error"] = str(exc)
+
+    if not latest["tag_name"]:
+        url = f"https://api.github.com/repos/{config.GITHUB_OWNER}/{config.GITHUB_REPO}/tags"
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            tags = [item.get("name") for item in payload if isinstance(item, dict) and item.get("name")]
+            if tags:
+                latest["tag_name"] = sorted(tags, key=lambda x: parse_semver(x) or (0, 0, 0, "", ""), reverse=True)[0]
+        except Exception as exc:
+            latest["error"] = str(exc)
+
+    VERSION_CACHE["data"] = latest
+    VERSION_CACHE["fetched_at"] = now
+    return latest
+
+
+def get_version_payload():
+    current = get_current_git_version()
+    release = get_github_release_data()
+    latest = release.get("tag_name") or current
+    update_available = False
+    if latest and current and compare_versions(latest, current) > 0:
+        update_available = True
+    return {
+        "current": current,
+        "latest": latest,
+        "updateAvailable": update_available,
+    }
+
+
+def run_command(args, cwd=REPO_DIR, env=None):
+    proc = subprocess.run(args, cwd=str(cwd), env=env, capture_output=True, text=True)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def restart_service():
+    cmd = ["systemd-run", "--no-block", "systemctl", "restart", config.SERVICE_NAME]
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        fallback = ["nohup", "systemctl", "restart", config.SERVICE_NAME]
+        try:
+            subprocess.Popen(fallback, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+
+def update_worker(job_id):
+    job = UPDATE_JOBS[job_id]
+    try:
+        job["state"] = "running"
+        job["step"] = "recording state"
+        previous_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_DIR, text=True).strip()
+        job["previous_commit"] = previous_commit
+
+        job["step"] = "checking worktree"
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=REPO_DIR, capture_output=True, text=True)
+        if status.stdout.strip():
+            raise RuntimeError("Working tree is not clean; commit or stash the changes before updating.")
+
+        job["step"] = "fetching latest release"
+        release_data = get_github_release_data()
+        latest = release_data.get("tag_name")
+        if not latest:
+            raise RuntimeError("No GitHub release or tag was available to update from.")
+        job["latest_tag"] = latest
+
+        job["step"] = "fetching git refs"
+        subprocess.run(["git", "fetch", "--tags", config.GITHUB_REPO_URL], cwd=REPO_DIR, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "checkout", "--detach", latest], cwd=REPO_DIR, check=True, capture_output=True, text=True)
+
+        job["step"] = "installing dependencies"
+        if os.path.exists(os.path.join(REPO_DIR, "requirements.txt")):
+            subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], cwd=REPO_DIR, check=True, capture_output=True, text=True)
+        elif os.path.exists(os.path.join(REPO_DIR, "package.json")):
+            subprocess.run(["npm", "ci"], cwd=REPO_DIR, check=True, capture_output=True, text=True)
+
+        if os.path.exists(os.path.join(REPO_DIR, "package.json")):
+            job["step"] = "building frontend"
+            proc = subprocess.run(["npm", "run", "build"], cwd=REPO_DIR, capture_output=True, text=True)
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "Build step failed")
+
+        job["step"] = "sanity check"
+        if os.path.exists(os.path.join(REPO_DIR, "requirements.txt")):
+            proc = subprocess.run([sys.executable, "-m", "compileall", "."], cwd=REPO_DIR, capture_output=True, text=True)
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "Sanity check failed")
+
+        job["step"] = "restarting service"
+        restart_service()
+        job["state"] = "success"
+        job["step"] = "restarted"
+    except Exception as exc:
+        job["state"] = "failed"
+        job["step"] = job.get("step", "failed")
+        job["error"] = str(exc)
+        try:
+            subprocess.run(["git", "checkout", "--detach", previous_commit], cwd=REPO_DIR, check=True, capture_output=True, text=True)
+        except Exception:
+            pass
     finally:
+        job["updated_at"] = time.time()
         UPDATE_LOCK.release()
-
-def is_local_request(handler):
-    ip = handler.client_address[0]
-    if ip in ("127.0.0.1", "::1"):
-        return True
-    host = (handler.headers.get("Host") or "").lower()
-    return host.startswith("localhost:") or host.startswith("127.0.0.1:") or host.startswith("[::1]:") or host.startswith("0.0.0.0:")
 
 
 def has_valid_update_token(handler):
     expected = (config.UPDATE_TOKEN or "").strip()
     if not expected:
         return False
-    token = (handler.headers.get("X-Update-Token") or handler.headers.get("Authorization") or "").strip()
-    if token.startswith("Bearer "):
-        token = token.split(" ", 1)[1].strip()
+    token = (handler.headers.get("X-Update-Token") or handler.headers.get("X-CSRF-Token") or "").strip()
     return token == expected
+
+
+def get_update_job(job_id):
+    if job_id not in UPDATE_JOBS:
+        return None
+    job = UPDATE_JOBS[job_id]
+    result = {"state": job.get("state", "idle"), "step": job.get("step", "idle"), "log": job.get("log", []), "error": job.get("error")}
+    if "latest_tag" in job:
+        result["latest_tag"] = job["latest_tag"]
+    return result
 
 def get_tree(force=False):
     """Thread-safe filesystem tree retrieval with caching."""
