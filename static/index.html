@@ -670,7 +670,12 @@ function App() {
     if (["checking", "updating", "restarting"].includes(updateState.status)) return;
     setUpdateState({ status: "checking", message: "Checking for updates..." });
     try {
-      const response = await fetch("/api/update", { method: "POST" });
+      const headers = { "Content-Type": "application/json" };
+      if (config.update_token) {
+        headers["X-Update-Token"] = config.update_token;
+      }
+
+      const response = await fetch("/api/update", { method: "POST", headers });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Could not start update.");
 
@@ -679,7 +684,11 @@ function App() {
       for (let attempt = 0; attempt < 180; attempt += 1) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         try {
-          const statusResponse = await fetch("/api/update-status");
+          const statusHeaders = {};
+          if (config.update_token) {
+            statusHeaders["X-Update-Token"] = config.update_token;
+          }
+          const statusResponse = await fetch("/api/update-status", { headers: statusHeaders });
           const status = await statusResponse.json();
           setUpdateState(status);
           if (status.status === "current") {

@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
+import os
 import subprocess
 
 PORT = 8765
 HOST = "0.0.0.0"
+
+# Set this to a strong secret on the EC2 instance, then keep the same value in the local UI.
+# Example: export CROCOHEMS_UPDATE_TOKEN="my-long-random-token"
+UPDATE_TOKEN = os.environ.get("CROCOHEMS_UPDATE_TOKEN", "change-me")
 
 SCAN_ROOTS = ["/workspace", "/root", "/home", "/opt", "/data", "/mnt", "/tmp"]
 

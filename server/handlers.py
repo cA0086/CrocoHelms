@@ -99,7 +99,21 @@ def update_worker(server):
         UPDATE_LOCK.release()
 
 def is_local_request(handler):
-    return handler.client_address[0] in ("127.0.0.1", "::1")
+    ip = handler.client_address[0]
+    if ip in ("127.0.0.1", "::1"):
+        return True
+    host = (handler.headers.get("Host") or "").lower()
+    return host.startswith("localhost:") or host.startswith("127.0.0.1:") or host.startswith("[::1]:") or host.startswith("0.0.0.0:")
+
+
+def has_valid_update_token(handler):
+    expected = (config.UPDATE_TOKEN or "").strip()
+    if not expected:
+        return False
+    token = (handler.headers.get("X-Update-Token") or handler.headers.get("Authorization") or "").strip()
+    if token.startswith("Bearer "):
+        token = token.split(" ", 1)[1].strip()
+    return token == expected
 
 def get_tree(force=False):
     """Thread-safe filesystem tree retrieval with caching."""
@@ -167,13 +181,17 @@ class Handler(BaseHTTPRequestHandler):
 
         # ── API ENDPOINTS ──
         elif p == "/api/update-status":
-            if not is_local_request(self):
-                self._json({"message": "Updates can only be managed from this device."}, 403)
+            if not (is_local_request(self) or has_valid_update_token(self)):
+                self._json({"message": "Updates require a valid update token."}, 403)
             else:
                 self._json(update_status)
 
         elif p == "/api/config":
-            self._json({"downloader": config.DOWNLOADER or "none"})
+            self._json({
+                "downloader": config.DOWNLOADER or "none",
+                "update_token_required": bool((config.UPDATE_TOKEN or "").strip()),
+                "update_token": config.UPDATE_TOKEN or ""
+            })
 
         elif p == "/api/scan":
             self._json({"tree": get_tree()})
@@ -267,9 +285,8 @@ class Handler(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
 
         if p == "/api/update":
-            expected_origin = f"http://{self.headers.get('Host', '')}"
-            if not is_local_request(self) or self.headers.get("Origin") != expected_origin:
-                self._json({"error": "Updates can only be started from this device."}, 403)
+            if not (is_local_request(self) or has_valid_update_token(self)):
+                self._json({"error": "Updates require a valid update token."}, 403)
                 return
             if not UPDATE_LOCK.acquire(blocking=False):
                 self._json({"error": "An update is already in progress."}, 409)
