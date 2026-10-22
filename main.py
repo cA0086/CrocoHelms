@@ -7,6 +7,16 @@ from http.server import HTTPServer
 import config
 from server.handlers import Handler, get_tree
 
+
+def print_update_token():
+    print()
+    print("╔══════════════════════════════════════════╗")
+    print("║  Update token for browser dashboard     ║")
+    print(f"║  {config.UPDATE_TOKEN:<34}║")
+    print("║  Enter this token in the dashboard      ║")
+    print("╚══════════════════════════════════════════╝")
+    print()
+
 def open_browser(url):
     time.sleep(1.3)
     try: webbrowser.open(url)
@@ -25,6 +35,7 @@ def main():
     url = f"http://127.0.0.1:{config.PORT}"
     print(f"║  Address     : {url:<26}║")
     print("╚══════════════════════════════════════════╝\n")
+    print_update_token()
     
     threading.Thread(target=get_tree, daemon=True).start()
     threading.Thread(target=open_browser, args=(url,), daemon=True).start()

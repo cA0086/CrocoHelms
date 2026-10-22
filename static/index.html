@@ -666,13 +666,30 @@ function App() {
     notifTimerRef.current = setTimeout(() => setNotif({ show: false, msg: "" }), 2800);
   }, []);
 
+  const getUpdateToken = () => {
+    const stored = localStorage.getItem("croco_update_token") || "";
+    if (stored) return stored;
+    if (config.update_token_required) {
+      const value = window.prompt("Enter the update token shown in the terminal when the app started:");
+      if (!value) return "";
+      localStorage.setItem("croco_update_token", value);
+      return value;
+    }
+    return "";
+  };
+
   const handleUpdate = async () => {
     if (["checking", "updating", "restarting"].includes(updateState.status)) return;
     setUpdateState({ status: "checking", message: "Checking for updates..." });
     try {
+      const token = getUpdateToken();
+      if (config.update_token_required && !token) {
+        throw new Error("Update token required. Enter the matching EC2 secret.");
+      }
+
       const headers = { "Content-Type": "application/json" };
-      if (config.update_token) {
-        headers["X-Update-Token"] = config.update_token;
+      if (token) {
+        headers["X-Update-Token"] = token;
       }
 
       const response = await fetch("/api/update", { method: "POST", headers });
@@ -685,8 +702,8 @@ function App() {
         await new Promise(resolve => setTimeout(resolve, 1000));
         try {
           const statusHeaders = {};
-          if (config.update_token) {
-            statusHeaders["X-Update-Token"] = config.update_token;
+          if (token) {
+            statusHeaders["X-Update-Token"] = token;
           }
           const statusResponse = await fetch("/api/update-status", { headers: statusHeaders });
           const status = await statusResponse.json();

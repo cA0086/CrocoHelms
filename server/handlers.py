@@ -319,8 +319,7 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/api/config":
             self._json({
                 "downloader": config.DOWNLOADER or "none",
-                "update_token_required": bool((config.UPDATE_TOKEN or "").strip()),
-                "update_token": config.UPDATE_TOKEN or ""
+                "update_token_required": bool((config.UPDATE_TOKEN or "").strip())
             })
 
         elif p == "/api/scan":
