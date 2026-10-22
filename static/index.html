@@ -1,0 +1,1497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>CrocoHelms</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Inter:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="app.css" />
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7.21.8/babel.min.js"></script>
+<script src="https://unpkg.com/monaco-editor@0.39.0/min/vs/loader.js"></script>
+
+<script>
+// Configure Monaco loader ONCE globally before any component runs it
+require.config({ paths: { vs: 'https://unpkg.com/monaco-editor@0.39.0/min/vs' } });
+</script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const EXT_ICON_MAP = {
+  py: "ti-brand-python", js: "ti-brand-javascript", ts: "ti-brand-typescript",
+  jsx: "ti-brand-react", tsx: "ti-brand-react", html: "ti-brand-html5", css: "ti-brand-css3",
+  png: "ti-photo", jpg: "ti-photo", jpeg: "ti-photo", gif: "ti-photo", svg: "ti-vector", ico: "ti-photo",
+  mp4: "ti-video", mov: "ti-video", avi: "ti-video", mkv: "ti-video", webm: "ti-video",
+  mp3: "ti-music", wav: "ti-music", flac: "ti-music", ogg: "ti-music",
+  zip: "ti-file-zip", tar: "ti-file-zip", gz: "ti-file-zip", rar: "ti-file-zip", "7z": "ti-file-zip",
+  safetensors: "ti-cube-3d-sphere", ckpt: "ti-cube-3d-sphere", pt: "ti-cube-3d-sphere", pth: "ti-cube-3d-sphere",
+  bin: "ti-binary", gguf: "ti-cube-3d-sphere", csv: "ti-table", xlsx: "ti-table", json: "ti-braces",
+  pdf: "ti-file-type-pdf", txt: "ti-file-text", md: "ti-markdown", log: "ti-file-text"
+};
+
+function getEditorLanguage(ext) {
+  const e = ext?.toLowerCase();
+  if (['py'].includes(e)) return 'python';
+  if (['js', 'jsx'].includes(e)) return 'javascript';
+  if (['ts', 'tsx'].includes(e)) return 'typescript';
+  if (['json'].includes(e)) return 'json';
+  if (['html'].includes(e)) return 'html';
+  if (['css'].includes(e)) return 'css';
+  if (['md'].includes(e)) return 'markdown';
+  if (['sh', 'bash'].includes(e)) return 'shell';
+  return 'plaintext';
+}
+
+function getExtIcon(ext, isDir) {
+  if (isDir) return { icon: "ti-folder-filled", color: "var(--accent)" };
+  const e = (ext || "").toLowerCase();
+  return { icon: EXT_ICON_MAP[e] || "ti-file", color: "#64748b" };
+}
+
+function fmtSz(n) {
+  if (!n || n === 0) return "0 B";
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB";
+  return (n / 1073741824).toFixed(2) + " GB";
+}
+
+function fmtTime(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
+}
+
+function fileExt(name) {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i + 1).toLowerCase() : "FILE";
+}
+
+function SvgIcon({ name, color, className = "", style = {} }) {
+  const paths = {
+    "ti-filter": <path d="M4 4h16v2.172a2 2 0 0 1 -.586 1.414l-4.414 4.414v7l-6 2v-8.5l-4.414 -4.414a2 2 0 0 1 -.586 -1.414v-2.172z" />,
+    "ti-chevron-down": <path d="M6 9l6 6l6 -6" />,
+    "ti-chevron-up": <path d="M6 15l6 -6l6 6" />,
+    "ti-search": <><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M21 21l-6 -6" /></>,
+    "ti-map-pin": <><path d="M9 11a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" /><path d="M17.657 16.657l-4.243 4.243a2 2 0 0 1 -2.827 0l-4.244 -4.243a8 8 0 1 1 11.314 0z" /></>,
+    "ti-download": <><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" /><path d="M7 11l5 5l5 -5" /><path d="M12 4l0 12" /></>,
+    "ti-folder": <><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2" /></>,
+    "ti-folder-filled": <path d="M9 3a1 1 0 0 1 .608 .206l.1 .087l2.706 2.707h6.586a3 3 0 0 1 2.995 2.824l.005 .176v8a3 3 0 0 1 -2.824 2.995l-.176 .005h-14a3 3 0 0 1 -2.995 -2.824l-.005 -.176v-11a3 3 0 0 1 2.824 -2.995l.176 -.005h4z" />,
+    "ti-upload": <><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" /><path d="M7 9l5 -5l5 5" /><path d="M12 4l0 12" /></>,
+    "ti-folder-open": <><path d="M5 19l2.75 -7h13.25l-2.75 7h-13.25z" /><path d="M5 19v-11a2 2 0 0 1 2 -2h4l3 3h5a2 2 0 0 1 2 2v1" /></>,
+    "ti-archive": <><path d="M3 4m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v0a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z" /><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-10" /><path d="M10 12l4 0" /></>,
+    "ti-check": <path d="M5 12l5 5l10 -10" />,
+    "ti-edit": <><path d="M4 20h4l10.5 -10.5a1.5 1.5 0 0 0 -4 -4l-10.5 10.5v4" /><line x1="13.5" y1="6.5" x2="17.5" y2="10.5" /></>,
+    "ti-device-floppy": <><path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" /><circle cx="12" cy="14" r="2" /><polyline points="9 8 9 4 15 4 15 8" /></>,
+    "ti-inbox-off": <><path d="M8 4h10a2 2 0 0 1 2 2v10m-.586 3.414a2 2 0 0 1 -1.414 .586h-12a2 2 0 0 1 -2 -2v-10a2 2 0 0 1 1.172 -1.828" /><path d="M4 13h3c.74 0 1.36 .54 1.45 1.28l.05 .22c.1 1.5 1.43 2.5 3 2.5m3.52 -1.55l.03 -.17c.09 -.74 .71 -1.28 1.45 -1.28h3" /><path d="M3 3l18 18" /></>,
+    "ti-stack-2": <><path d="M12 4l-8 4l8 4l8 -4l-8 -4" /><path d="M4 12l8 4l8 -4" /><path d="M4 16l8 4l8 -4" /></>,
+    "ti-cloud-download": <><path d="M19 18a3.5 3.5 0 0 0 0 -7h-1a5 4.5 0 0 0 -11 -2a4.6 4.4 0 0 0 -2.1 8.4" /><path d="M12 13l0 9" /><path d="M9 19l3 3l3 -3" /></>,
+    "ti-cloud-upload": <><path d="M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7h-1" /><path d="M9 15l3 -3l3 3" /><path d="M12 12l0 9" /></>,
+    "ti-x": <><path d="M18 6l-12 12" /><path d="M6 6l12 12" /></>,
+    "ti-refresh": <><path d="M20 11A8.1 8.1 0 0 0 4.5 9M4 5v4h4M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></>,
+    "ti-link": <><path d="M9 15l6 -6" /><path d="M11 6l.463 -.536a5 5 0 0 1 7.071 7.072l-.534 .464" /><path d="M13 18l-.397 .534a5.068 5.068 0 0 1 -7.127 0a4.972 4.972 0 0 1 0 -7.071l.524 -.463" /></>,
+    "ti-file-zip": <><path d="M6 20.5v-14a2 2 0 0 1 2 -2h6l5 5v11.5a2 2 0 0 1 -2 2h-9a2 2 0 0 1 -2 -2z" /><path d="M14 3v5h5" /><path d="M10 8v8h2m-2 -4h2" /></>,
+    "ti-cube-3d-sphere": <><path d="M12 3l8 4.5l0 9l-8 4.5l-8 -4.5l0 -9l8 -4.5" /><path d="M12 12l8 -4.5" /><path d="M12 12l0 9" /><path d="M12 12l-8 -4.5" /></>,
+    "ti-binary": <><path d="M11 10v-5h-1m8 14v-5h-1" /><path d="M15 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v3a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z" /><path d="M5 14m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v3a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z" /></>,
+    "ti-table": <><path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14z" /><path d="M3 10h18" /><path d="M10 3v18" /></>,
+    "ti-braces": <><path d="M7 4a2 2 0 0 0 -2 2v3a2 3 0 0 1 -2 3a2 3 0 0 1 2 3v3a2 2 0 0 0 2 2" /><path d="M17 4a2 2 0 0 1 2 2v3a2 3 0 0 0 2 3a2 3 0 0 0 -2 3v3a2 2 0 0 1 -2 2" /></>,
+    "ti-file-type-pdf": <><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M5 12v-7a2 2 0 0 1 2 -2h7l5 5v4" /><path d="M5 18h1.5a1.5 1.5 0 0 0 0 -3h-1.5v6" /><path d="M17 18h2" /><path d="M20 15h-3v6" /><path d="M11 15v6h1a2 2 0 0 0 2 -2v-2a2 2 0 0 0 -2 -2h-1z" /></>,
+    "ti-file-text": <><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" /><path d="M9 9l1 0" /><path d="M9 13l6 0" /><path d="M9 17l6 0" /></>,
+    "ti-markdown": <><path d="M3 5m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z" /><path d="M7 15v-6l2 2l2 -2v6" /><path d="M14 13l2 2l2 -2m-2 2v-6" /></>,
+    "ti-file": <><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" /></>,
+    "ti-arrow-left": <><path d="M5 12l14 0" /><path d="M5 12l6 6" /><path d="M5 12l6 -6" /></>,
+    "ti-arrow-right": <><path d="M5 12l14 0" /><path d="M13 18l6 -6" /><path d="M13 6l6 6" /></>,
+    "ti-trash": <><path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" /></>,
+    "ti-cut": <><path d="M7 17m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" /><path d="M17 17m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0" /><path d="M9.15 14.85l8.85 -10.85" /><path d="M6 4l8.85 10.85" /></>,
+    "ti-copy": <><path d="M7 7m0 2.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667z" /><path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" /></>,
+    "ti-clipboard": <><path d="M9 5h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2h-2" /><path d="M9 3m0 2a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v0a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2z" /></>,
+    "ti-folder-plus": <><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2" /><path d="M12 10l0 6" /><path d="M10 13l4 0" /></>,
+    "ti-file-plus": <><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" /><path d="M12 11l0 6" /><path d="M10 14l4 0" /></>,
+    "ti-sparkles": <path d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L18 14l-6.857 2.286L9 23l-2.286-6.857L0 14l6.857-2.286L9 5z" />
+  };
+  const isFilled = name.endsWith("-filled");
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill={isFilled ? "currentColor" : "none"} stroke={isFilled ? "none" : "currentColor"} strokeWidth={isFilled ? "0" : "2"} strokeLinecap="round" strokeLinejoin="round" className={className} style={{ flexShrink: 0, minWidth: "1em", ...style, color: color || style.color }}>
+      {paths[name] || paths["ti-file"]}
+    </svg>
+  );
+}
+
+function TreeNode({ node, depth, selectedPath, onSelect, searchQuery, onDropFiles, onMoveFile, clipboard }) {
+  const isDir = node.children !== undefined;
+  const [expanded, setExpanded] = useState(depth === 0 && isDir);
+  const hasKids = isDir && node.children.length > 0;
+  const isActive = selectedPath === node.path;
+
+  // NEW: Automatically force the folder to stay open if you are working inside it
+  const isSelectedDescendant = selectedPath && selectedPath.startsWith(node.path + "/");
+  useEffect(() => {
+    if (isSelectedDescendant) setExpanded(true);
+  }, [isSelectedDescendant]);
+
+  const matchesSearch = (n, q) => {
+    if (!q) return true;
+    if (n.path.toLowerCase().includes(q.toLowerCase())) return true;
+    return (n.children || []).some(c => matchesSearch(c, q));
+  };
+
+  if (searchQuery && !matchesSearch(node, searchQuery)) return null;
+  const { icon, color } = getExtIcon(fileExt(node.name), isDir);
+
+  return (
+    <div className="tnode">
+      <div 
+        className={`tnrow draggable-item${isActive ? " active" : ""}${clipboard?.srcPath === node.path ? (clipboard.action === 'cut' ? ' item-cut' : ' item-copied') : ''}`} 
+        style={{ paddingLeft: `${depth * 16 + 8}px` }} 
+        draggable="true"
+        data-path={node.path}
+        onDragStart={e => e.dataTransfer.setData("text/plain", node.path)}
+        onClick={e => { e.stopPropagation(); onSelect(node.path); if (hasKids) setExpanded(v => !v); }}
+        onDragOver={isDir ? e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.add("drag-hover"); } : undefined}
+        onDragLeave={isDir ? e => { 
+          e.preventDefault(); e.stopPropagation(); 
+          if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove("drag-hover"); 
+        } : undefined}
+        onDrop={isDir ? e => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.currentTarget.classList.remove("drag-hover");
+          const srcPath = e.dataTransfer.getData("text/plain");
+          if (srcPath && !e.dataTransfer.files?.length) {
+            if (onMoveFile) onMoveFile(srcPath, node.path);
+          } else if (e.dataTransfer.files && e.dataTransfer.files.length) {
+            onSelect(node.path);
+            if (onDropFiles) onDropFiles(e.dataTransfer.files);
+          }
+        } : undefined}
+      >
+        <span className="tn-arrow">{isDir ? (hasKids ? (expanded ? "▾" : "▸") : "▸") : ""}</span>
+        <SvgIcon name={icon} className="tn-folder-icon" color={color} />
+        <span className="tn-name">{node.name}</span>
+      </div>
+      {hasKids && expanded && (
+        <div>{node.children.map((child) => <TreeNode key={child.path} node={child} depth={depth + 1} selectedPath={selectedPath} onSelect={onSelect} searchQuery={searchQuery} onDropFiles={onDropFiles} onMoveFile={onMoveFile} clipboard={clipboard} />)}</div>
+      )}
+    </div>
+  );
+}
+
+function DlCard({ d, onCancel }) {
+  const status = (d.status || "").toLowerCase();
+  const rawP = parseFloat(d.progress) || 0;
+  const p = rawP > 1 ? rawP : (rawP > 0 ? rawP * 100 : 0);
+  const pct = Math.min(100, Math.max(0, p));
+  return (
+    <div className="dl-card">
+      <div className="dl-info">
+        <span className="dl-filename" title={d.filename}>{d.filename}</span>
+        <span className="dl-stats">{status === "complete" ? "Complete" : d.last_log || d.status}</span>
+        <span className="dl-percent">{Math.round(pct)}%</span>
+        <div className="dl-actions"><button className="dl-btn" onClick={() => onCancel(d.id)}><SvgIcon name="ti-x" /></button></div>
+      </div>
+      <div className="dl-track"><div className={`dl-fill ${status === 'downloading' ? 'active' : ''} ${status === 'complete' ? 'done' : ''}`} style={{ width: `${pct}%` }} /></div>
+    </div>
+  );
+}
+
+// ─── MONACO EDITOR MODAL ───
+// Isolated as its own component so the container div is guaranteed
+// to exist in the DOM before Monaco tries to mount into it.
+function EditorModal({ filePath, onClose, onSave, toast }) {
+  const modalRef = useRef(null);
+  const containerRef = useRef(null);
+  const editorRef = useRef(null);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const dragRef = useRef({ isDragging: false, startX: 0, startY: 0, initialX: 0, initialY: 0 });
+
+  const handleMouseDown = (e) => {
+    if (e.target.closest('button')) return;
+    dragRef.current = {
+      isDragging: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialX: modalRef.current.offsetLeft,
+      initialY: modalRef.current.offsetTop
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleMouseMove = (e) => {
+    if (!dragRef.current.isDragging || !modalRef.current) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    modalRef.current.style.left = `${dragRef.current.initialX + dx}px`;
+    modalRef.current.style.top = `${dragRef.current.initialY + dy}px`;
+  };
+
+  const handleMouseUp = () => {
+    dragRef.current.isDragging = false;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+  };
+
+  useEffect(() => {
+    if (!filePath) return;
+    setLoading(true);
+
+    // Fetch file content first, then init or update editor
+    fetch("/api/edit/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: filePath })
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) { toast(data.error); onClose(); return; }
+
+        // Guard: confirm this response is for the file we requested
+        if (data.path && data.path !== filePath) return;
+
+        const lang = getEditorLanguage(fileExt(filePath));
+        const content = data.content || "";
+
+        require(['vs/editor/editor.main'], () => {
+          if (!containerRef.current) return;
+
+          if (editorRef.current) {
+            // Editor already exists — update model content and language
+            const model = editorRef.current.getModel();
+            editorRef.current.setValue(content);
+            monaco.editor.setModelLanguage(model, lang);
+          } else {
+            // First open — create a fresh editor instance
+            editorRef.current = monaco.editor.create(containerRef.current, {
+              value: content,
+              language: lang,
+              theme: 'vs-light',
+              automaticLayout: true,
+              fontSize: 13,
+              fontFamily: 'JetBrains Mono',
+              minimap: { enabled: false },
+              lineNumbersMinChars: 3
+            });
+          }
+          setLoading(false);
+        });
+      })
+      .catch(() => { toast("Network error opening editor"); onClose(); });
+
+    // Dispose editor instance when modal unmounts
+    return () => {
+      if (editorRef.current) {
+        editorRef.current.dispose();
+        editorRef.current = null;
+      }
+    };
+  }, [filePath]); // Re-runs every time filePath changes
+
+  useEffect(() => {
+    if (modalRef.current) {
+      modalRef.current.style.left = `${Math.max(0, window.innerWidth / 2 - 400)}px`;
+      modalRef.current.style.top = `${Math.max(0, window.innerHeight / 2 - 300)}px`;
+      modalRef.current.style.width = "800px";
+      modalRef.current.style.height = "600px";
+    }
+  }, []);
+
+  const handleSave = () => {
+    if (!editorRef.current || !filePath) return;
+    setSaving(true);
+    const content = editorRef.current.getValue();
+    fetch("/api/edit/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: filePath, content })
+    })
+      .then(r => r.json())
+      .then(data => {
+        setSaving(false);
+        if (data.error) { toast(data.error); return; }
+        toast("✓ File saved successfully to disk");
+      })
+      .catch(() => { setSaving(false); toast("Failed to save file"); });
+  };
+
+  const handleFind = () => {
+    if (editorRef.current) {
+      editorRef.current.getAction('actions.find').run();
+    }
+  };
+
+  return (
+    <div ref={modalRef} className="modal" style={{ position: "fixed", maxWidth: "100vw", maxHeight: "100vh", display: "flex", flexDirection: "column", padding: "0", zIndex: 400, boxShadow: "0 12px 48px rgba(0,0,0,0.25)", resize: "both", overflow: "hidden", animation: "none", transform: "none" }}>
+      <div className="modal-header" onMouseDown={handleMouseDown} style={{ padding: "14px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", background: "#f8fafc", cursor: "move", userSelect: "none" }}>
+          <SvgIcon name="ti-edit" color="var(--accent)" />
+          <span style={{ fontFamily: "monospace", fontSize: "12px", color: "#334155", marginLeft: "8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+            {filePath}
+          </span>
+          <div style={{ display: "flex", gap: "8px", marginLeft: "auto" }}>
+            <button className="action-btn" onClick={handleFind} disabled={loading} style={{ padding: "5px 14px", height: "auto" }}>
+              <SvgIcon name="ti-search" /> Find
+            </button>
+            <button className="action-btn primary" onClick={handleSave} disabled={saving || loading} style={{ padding: "5px 14px", height: "auto" }}>
+              <SvgIcon name="ti-device-floppy" /> {saving ? "Saving..." : "Save"}
+            </button>
+            <button className="action-btn" onClick={onClose} style={{ padding: "5px 14px", height: "auto" }}>
+              ✕ Close
+            </button>
+          </div>
+        </div>
+        {loading && (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div className="spinner" />
+          </div>
+        )}
+        <div ref={containerRef} style={{ flex: 1, width: "100%", display: loading ? "none" : "block", overflow: "hidden" }} />
+    </div>
+  );
+}
+
+function PreFlightCard({ onAcknowledge }) {
+  const [hw, setHw] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [installing, setInstalling] = useState(false);
+  const [actionError, setActionError] = useState("");
+
+  const checkHardware = () => {
+    setLoading(true);
+    setActionError("");
+    fetch("/api/hardware")
+      .then(r => r.json())
+      .then(data => { setHw(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    checkHardware();
+  }, []);
+
+  const handleInstallPip = () => {
+    setInstalling(true);
+    setActionError("");
+    fetch("/api/hardware/install", { method: "POST" })
+      .then(r => r.json())
+      .then(data => {
+        setInstalling(false);
+        if (data.ok) {
+          checkHardware(); // Re-scan the hardware once installation finishes
+        } else {
+          setActionError(data.error || "Installation failed.");
+        }
+      })
+      .catch(() => {
+        setInstalling(false);
+        setActionError("Network error starting installer pipeline.");
+      });
+  };
+
+  if (loading || installing) {
+    return (
+      <div className="preflight-card" style={{ textAlign: "center", padding: "40px 20px" }}>
+        <div className="spinner" style={{ margin: "0 auto 16px auto" }} />
+        <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+          {installing ? "Installing psutil to system environment..." : "Analyzing system resources..."}
+        </div>
+      </div>
+    );
+  }
+
+  // CASE: Backend explicitly reported a missing dependency
+  if (hw && hw.missing_dep === "psutil") {
+    return (
+      <div className="preflight-card">
+        <div style={{ fontSize: "14px", fontWeight: "600", color: "#f59e0b", marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+          ⚠️ Core Dependency Missing
+        </div>
+        <p style={{ fontSize: "12px", color: "var(--text-muted)", lineHeight: "1.6", marginBottom: "16px" }}>
+          The app needs the <strong>psutil</strong> package to analyze your server's RAM and CPU allocation boundaries before initializing local AI models.
+        </p>
+        
+        {actionError && (
+          <div style={{ color: "#ef4444", fontSize: "11px", marginBottom: "12px", fontFamily: "var(--mono)" }}>
+            Error: {actionError}
+          </div>
+        )}
+
+        <button className="action-btn primary" style={{ width: "100%", justifyContent: "center" }} onClick={handleInstallPip}>
+          Install psutil via GUI
+        </button>
+      </div>
+    );
+  }
+
+  if (!hw || hw.ok === false) {
+    return (
+      <div className="preflight-card" style={{ borderColor: "#ef4444" }}>
+        <div style={{ color: "#ef4444", fontSize: "12px", fontWeight: "600" }}>Diagnostic Exception</div>
+        <p style={{ fontSize: "11px", color: "var(--text-muted)" }}>{hw?.error || "Unknown hardware access error."}</p>
+        <button className="action-btn" style={{ marginTop: "12px" }} onClick={checkHardware}>Retry Diagnostics</button>
+      </div>
+    );
+  }
+
+  // CASE: Hardware check succeeded, show metrics configuration
+  const ramColor = hw.ram_total < 3 ? "#ef4444" : hw.ram_total < 7 ? "#f59e0b" : "#22c55e";
+  const cpuColor = hw.cpu_cores < 2 ? "#f59e0b" : "#22c55e";
+  
+  const recs = {
+    micro: { text: "Micro Models Only (<1B params)", desc: "Your system has highly constrained RAM. We strongly recommend Qwen 0.5B or TinyLlama to prevent server crashes.", color: "#ef4444" },
+    small: { text: "Small Models (1B - 3B params)", desc: "Your system can handle efficient models. We recommend Gemma 2B or Qwen 1.5B for a balance of speed and intelligence.", color: "#f59e0b" },
+    standard: { text: "Standard Models (7B+ params)", desc: "Your system has plenty of RAM. You can comfortably run Llama-3 8B or Mistral natively.", color: "#22c55e" }
+  };
+  const currentRec = recs[hw.tier] || recs.micro;
+
+  return (
+    <div className="preflight-card">
+      <div style={{ fontSize: "12px", fontWeight: "600", color: "var(--text-main)", marginBottom: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+        System Diagnostics
+      </div>
+      
+      <div className="pf-grid">
+        <div className="pf-stat">
+          <span className="pf-dot" style={{ background: ramColor, boxShadow: `0 0 8px ${ramColor}66` }} />
+          <div className="pf-details">
+            <div className="pf-label">Memory (RAM)</div>
+            <div className="pf-val">{hw.ram_avail}GB Free / {hw.ram_total}GB Total</div>
+          </div>
+        </div>
+
+        <div className="pf-stat">
+          <span className="pf-dot" style={{ background: cpuColor, boxShadow: `0 0 8px ${cpuColor}66` }} />
+          <div className="pf-details">
+            <div className="pf-label">Processor</div>
+            <div className="pf-val">{hw.cpu_cores} Cores ({hw.cpu_threads} Threads)</div>
+          </div>
+        </div>
+
+        <div className="pf-stat">
+          <span className="pf-dot" style={{ background: hw.has_gpu ? "#22c55e" : "#a1a1aa", boxShadow: hw.has_gpu ? `0 0 8px #22c55e66` : 'none' }} />
+          <div className="pf-details">
+            <div className="pf-label">Hardware Acceleration</div>
+            <div className="pf-val">{hw.has_gpu ? hw.gpu_name : "CPU Only Mode"}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="pf-alert" style={{ borderLeftColor: currentRec.color }}>
+        <strong>Recommendation: {currentRec.text}</strong>
+        <p>{currentRec.desc}</p>
+      </div>
+
+      <button className="action-btn primary" style={{ width: "100%", marginTop: "16px", justifyContent: "center" }} onClick={() => onAcknowledge(hw.tier)}>
+        I Understand, Initialize AI
+      </button>
+    </div>
+  );
+}
+
+function ModelInstallerCard({ systemTier, onInstallComplete }) {
+  const [status, setStatus] = useState('idle'); // idle, downloading, completed, failed
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    let interval;
+    if (status === 'downloading') {
+      interval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/install-status');
+          const data = await res.json();
+          setStatus(data.status);
+          setProgress(data.progress);
+          if (data.status === 'completed' || data.status === 'failed') {
+            clearInterval(interval);
+            if (data.status === 'completed') onInstallComplete();
+          }
+        } catch (e) {
+          setStatus('failed');
+          clearInterval(interval);
+        }
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [status]);
+
+  const handleInstall = async () => {
+    setStatus('downloading');
+    setProgress(0);
+    try {
+      await fetch('/api/install-model', { method: 'POST' });
+    } catch (e) {
+      setStatus('failed');
+    }
+  };
+
+  return (
+    <div className="ai-card">
+      <div className="ai-card-header">
+        <div>
+          <h4 className="ai-card-title">Local AI Core Status</h4>
+          <p className="ai-card-sub">
+            {status === 'completed' ? 'Ready to use' : 'No local model detected in vm_manager/'}
+          </p>
+        </div>
+        {systemTier === 'micro' && status === 'idle' && (
+          <span className="ai-tier-badge">Low VRAM Recommendation</span>
+        )}
+      </div>
+
+      {status === 'idle' && (
+        <button onClick={handleInstall} className="action-btn primary" style={{ width: '100%', justifyContent: 'center', background: '#4f46e5', borderColor: '#4f46e5', color: '#fff' }}>
+          One-Click Install Qwen 0.5B
+        </button>
+      )}
+
+      {status === 'downloading' && (
+        <div className="ai-progress-wrap">
+          <div className="ai-progress-labels">
+            <span>Downloading to vm_manager/models/...</span>
+            <span>{Math.round(progress)}%</span>
+          </div>
+          <div className="ai-progress-track">
+            <div className="ai-progress-fill" style={{ width: `${progress}%` }} />
+          </div>
+        </div>
+      )}
+
+      {status === 'completed' && (
+        <div className="ai-complete-text">
+          <SvgIcon name="ti-check" />
+          <span>Qwen 0.5B successfully installed and ready. File summarization enabled.</span>
+        </div>
+      )}
+
+      {status === 'failed' && (
+        <button onClick={handleInstall} className="ai-fail-text">
+          Installation failed. Click here to try again.
+        </button>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  const [onlineStatus, setOnlineStatus] = useState("CONNECTING");
+  const [config, setConfig] = useState({ downloader: "none" });
+  const [fsTree, setFsTree] = useState([]);
+  const [tab, setTab] = useState("files");
+  const [selectedPath, setSelectedPath] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [treeSearch, setTreeSearch] = useState("");
+  const [folderFiles, setFolderFiles] = useState([]);
+  const [selectedFiles, setSelectedFiles] = useState(new Set());
+  const [fileSearch, setFileSearch] = useState("");
+  const [newItemName, setNewItemName] = useState("");
+  const [sortKey, setSortKey] = useState("name");
+  const [sortAsc, setSortAsc] = useState(true);
+  const [loadingFolder, setLoadingFolder] = useState(false);
+  const [dlState, setDlState] = useState({});
+  const [urlInput, setUrlInput] = useState("");
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [ulState, setUlState] = useState({});
+  const [uploadDest, setUploadDest] = useState("");
+  const [zipOpen, setZipOpen] = useState(false);
+  const [zipName, setZipName] = useState("");
+  const [zipTargets, setZipTargets] = useState([]);
+  const [notif, setNotif] = useState({ show: false, msg: "" });
+  const [storageData, setStorageData] = useState(null);
+
+  // AI Feature States
+  const [aiFlowState, setAiFlowState] = useState('preflight'); // preflight, install, ready
+  const [systemTier, setSystemTier] = useState(null);
+  const [summarizingPath, setSummarizingPath] = useState(null);
+  const [aiSummary, setAiSummary] = useState(null);
+
+  // editorPath = null means closed, any string means open with that file
+  const [editorPath, setEditorPath] = useState(null);
+
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [fileToDelete, setFileToDelete] = useState("");
+  const [clipboard, setClipboard] = useState({ srcPath: null, action: null });
+
+  const notifTimerRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
+  const treePanelRef = useRef(null);
+
+  useEffect(() => {
+    let audioCtx = null;
+    function playTactileClick() {
+      try {
+        if (!window.AudioContext && !window.webkitAudioContext) return;
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.05);
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.05);
+      } catch (e) {}
+    }
+
+    const handleGlobalMousedown = (e) => {
+      if (e.button !== 0) return; // Only trigger on primary left click
+      // Whitelist interactive UI elements where a physical click feel is appropriate
+      const isInteractive = e.target.closest('button, a, input, .tnrow, tbody tr, th.sortable, .tab-btn, .drop-zone, .icon-btn, .status-dot, .remove-btn, .modal-header, .resizer');
+      if (isInteractive) playTactileClick();
+    };
+
+    // Use the capture phase (true) to ensure the sound fires instantly even if a child calls stopPropagation
+    document.addEventListener('mousedown', handleGlobalMousedown, true);
+    return () => document.removeEventListener('mousedown', handleGlobalMousedown, true);
+  }, []);
+
+  const toast = useCallback((msg) => {
+    if (notifTimerRef.current) clearTimeout(notifTimerRef.current);
+    setNotif({ show: true, msg });
+    notifTimerRef.current = setTimeout(() => setNotif({ show: false, msg: "" }), 2800);
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/config").then((r) => r.json()).then((cfg) => setConfig(cfg)).catch(() => toast("Failed to load backend config"));
+    fetchTree();
+    
+    // Initial fetch for storage
+    fetch("/api/storage").then(r => r.json()).then(setStorageData).catch(console.error);
+
+    const interval = setInterval(() => {
+      fetch("/api/status").then((r) => r.json()).then((d) => { setOnlineStatus("online"); setDlState(d.downloads || {}); }).catch(() => { setOnlineStatus("offline"); });
+    }, 1500);
+
+    // Check storage every 15 seconds
+    const storageInterval = setInterval(() => {
+      fetch("/api/storage").then(r => r.json()).then(setStorageData).catch(console.error);
+    }, 15000);
+
+    return () => { clearInterval(interval); clearInterval(storageInterval); };
+  }, []);
+
+  const fetchTree = () => {
+    fetch("/api/scan", { method: "POST" })
+      .then((r) => r.json())
+      .then((d) => setFsTree(d.tree || []))
+      .catch(() => toast("Scan failed"));
+  };
+
+  const handleRescan = () => {
+    fetch("/api/scan", { method: "POST" })
+      .then((r) => r.json())
+      .then((d) => { setFsTree(d.tree || []); toast("Filesystem refreshed"); });
+  };
+
+  const selectPath = (path, isHistoryNav = false) => {
+    setSelectedPath(path); setUploadDest(path); setLoadingFolder(true); setFolderFiles([]); setSelectedFiles(new Set());
+    if (tab !== "files") setTab("files");
+
+    if (!isHistoryNav) {
+      setHistoryIndex(prevIdx => {
+        setHistory(prevHist => {
+          const next = prevHist.slice(0, prevIdx + 1);
+          next.push(path);
+          return next;
+        });
+        return prevIdx + 1;
+      });
+    }
+
+    fetch(`/api/ls?path=${encodeURIComponent(path)}`).then((r) => r.json()).then((data) => {
+      setLoadingFolder(false); if (data.error) { toast(`Error: ${data.error}`); return; } setFolderFiles(data.items || []);
+    }).catch((e) => { setLoadingFolder(false); toast(String(e)); });
+  };
+
+  const goBack = () => {
+    if (historyIndex > 0) { const newIdx = historyIndex - 1; setHistoryIndex(newIdx); selectPath(history[newIdx], true); }
+  };
+
+  const goForward = () => {
+    if (historyIndex < history.length - 1) { const newIdx = historyIndex + 1; setHistoryIndex(newIdx); selectPath(history[newIdx], true); }
+  };
+
+  const toggleFile = (path) => {
+    setSelectedFiles(prev => { const next = new Set(prev); next.has(path) ? next.delete(path) : next.add(path); return next; });
+  };
+
+  const selectAll = () => setSelectedFiles(new Set(folderFiles.filter(f => !f.is_dir).map(f => f.path)));
+  const deselectAll = () => setSelectedFiles(new Set());
+
+  const getDisplayFiles = () => {
+    let items = [...folderFiles];
+    if (fileSearch) items = items.filter(f => f.name.toLowerCase().includes(fileSearch.toLowerCase()));
+    return items.sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      let va = a[sortKey] ?? 0, vb = b[sortKey] ?? 0;
+      if (typeof va === "string") { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+      return sortAsc ? (va < vb ? -1 : va > vb ? 1 : 0) : (va > vb ? -1 : va < vb ? 1 : 0);
+    });
+  };
+
+  const toggleSort = (key) => { if (sortKey === key) setSortAsc(v => !v); else { setSortKey(key); setSortAsc(true); } };
+
+  const queueDownloads = () => {
+    if (!selectedPath) { toast("Select a destination folder first"); return; }
+    const urls = urlInput.split(/[\n\r,]+/).map(u => u.trim()).filter(u => u.startsWith("http"));
+    if (!urls.length) { toast("No valid URLs found"); return; }
+    urls.forEach((url) => {
+      fetch("/api/download", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, dest_path: selectedPath }) }).then((r) => r.json()).then((d) => { if (d.id) setDlState((prev) => ({ ...prev, [d.id]: d })); }).catch(() => toast("Server error parsing download target"));
+    });
+    setUrlInput(""); toast(`Queued ${urls.length} file(s) → ${selectedPath.split("/").pop() || selectedPath}`);
+  };
+
+  const cancelDl = (id) => {
+    fetch("/api/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }).then(() => setDlState(prev => { const n = { ...prev }; delete n[id]; return n; }));
+  };
+
+  const addFilesFromInput = (files) => {
+    // Map raw files into objects that preserve their relative directory structure
+    const arr = Array.from(files).map(f => ({
+      raw: f,
+      name: f.name,
+      size: f.size,
+      relPath: f.webkitRelativePath || f.name // Fallback to name if it's a flat file
+    }));
+    
+    setPendingFiles(prev => [
+      ...prev, 
+      ...arr.filter(newF => !prev.some(p => p.relPath === newF.relPath && p.size === newF.size))
+    ]);
+    
+    if (tab !== "uploads") setTab("uploads");
+  };
+
+  const removePending = (idx) => setPendingFiles(prev => prev.filter((_, i) => i !== idx));
+  const startUploads = () => { if (!uploadDest || !pendingFiles.length) return; const targets = [...pendingFiles]; setPendingFiles([]); targets.forEach((file) => uploadSingleFile(file, uploadDest)); };
+
+  const uploadSingleFile = (fileObj, dest) => {
+    const ulId = "ul-" + Math.random().toString(36).slice(2, 8);
+    setUlState((prev) => ({ ...prev, [ulId]: { id: ulId, filename: fileObj.relPath, dest_path: dest, status: "uploading", progress: 0, last_log: "" } }));
+    
+    const fd = new FormData(); 
+    fd.append("dest_path", dest); 
+    fd.append("relative_path", fileObj.relPath); // Send the nested structure to Python
+    fd.append("file", fileObj.raw, fileObj.name);
+    
+    const xhr = new XMLHttpRequest(); 
+    xhr.open("POST", "/api/upload");
+    
+    xhr.upload.addEventListener("progress", (e) => { 
+      if (e.lengthComputable) setUlState((prev) => ({ ...prev, [ulId]: { ...prev[ulId], progress: e.loaded / e.total, last_log: `${fmtSz(e.loaded)} / ${fmtSz(e.total)}` } })); 
+    });
+    
+    xhr.addEventListener("load", () => {
+      try {
+        const res = JSON.parse(xhr.responseText);
+        if (res.ok) { 
+          setUlState((prev) => ({ ...prev, [ulId]: { ...prev[ulId], status: "complete", progress: 1, last_log: `Saved → ${dest}/${fileObj.relPath}` } })); 
+          toast(`✓ Uploaded ${fileObj.name}`); 
+        } else { 
+          setUlState((prev) => ({ ...prev, [ulId]: { ...prev[ulId], status: "error", last_log: res.error || "Upload failed" } })); 
+        }
+      } catch { 
+        setUlState((prev) => ({ ...prev, [ulId]: { ...prev[ulId], status: "error", last_log: "Bad server response" } })); 
+      }
+    });
+    xhr.send(fd);
+  };
+
+  const openZip = () => {
+    const targets = selectedFiles.size > 0 ? [...selectedFiles] : folderFiles.filter(f => !f.is_dir).map(f => f.path);
+    if (!targets.length) { toast("No files to archive"); return; } setZipTargets(targets); setZipName((selectedPath || "folder").split("/").pop() + ".zip"); setZipOpen(true);
+  };
+
+  const executeZipAndDownload = () => {
+    if (!zipTargets.length) return; const name = zipName.trim() || "archive.zip"; setZipOpen(false); toast("Creating zip…");
+    fetch("/api/zip", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paths: zipTargets, name }) })
+      .then((r) => { if (!r.ok) return r.json().then((d) => { throw new Error(d.error || "Zip failed"); }); return r.blob(); })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(() => URL.revokeObjectURL(url), 2000); toast(`✓ ${name} downloaded`);
+      }).catch((e) => toast("Zip error: " + e.message));
+  };
+
+  const downloadSelected = () => {
+    if (!selectedFiles.size) return;
+    selectedFiles.forEach((p) => {
+      const name = p.split("/").pop(); const a = document.createElement("a"); a.href = `/api/file?path=${encodeURIComponent(p)}`; a.download = name; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    });
+    toast(`Downloading ${selectedFiles.size} file(s)…`); deselectAll();
+  };
+
+  const confirmDelete = (filePath) => {
+    setFileToDelete(filePath);
+    setDeleteModalOpen(true);
+  };
+
+  const executeDelete = () => {
+    if (!fileToDelete) return;
+    fetch("/api/file/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: fileToDelete })
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) { toast(`Error: ${data.error}`); setDeleteModalOpen(false); return; }
+        toast(`✓ ${data.message || "Item deleted successfully"}`);
+        
+        // Simultaneously prune from both the main view and sidebar tree for instantaneous layout synchronization
+        setFolderFiles(prev => prev.filter(f => f.path !== fileToDelete));
+        setFsTree(prev => {
+          const removeNode = (nodes) => nodes.filter(n => n.path !== fileToDelete).map(n => ({
+            ...n, children: n.children ? removeNode(n.children) : undefined
+          }));
+          return removeNode(prev);
+        });
+
+        // Automatically navigate up one level if the active workspace folder was deleted
+        if (selectedPath === fileToDelete || selectedPath?.startsWith(fileToDelete + "/")) {
+          const parentPath = fileToDelete.split("/").slice(0, -1).join("/");
+          if (parentPath) selectPath(parentPath);
+          else { setSelectedPath(null); setFolderFiles([]); }
+        }
+        
+        // Wait for filesystem buffer to clear before pulling standard state
+        setTimeout(fetchTree, 400);
+        setDeleteModalOpen(false);
+        setFileToDelete("");
+      })
+      .catch(() => { toast("Network error executing delete"); setDeleteModalOpen(false); setFileToDelete(""); });
+  };
+
+  const moveFile = (srcPath, destDir) => {
+    if (!srcPath || !destDir || srcPath === destDir) return;
+    
+    const fileName = srcPath.split("/").pop();
+    const expectedDest = destDir.endsWith("/") ? destDir + fileName : destDir + "/" + fileName;
+    if (srcPath === expectedDest) return;
+    fetch("/api/file/move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ src_path: srcPath, dest_dir: destDir })
+    }).then(res => res.json()).then(data => {
+      if (data.error) { toast(`Error: ${data.error}`); return; }
+      toast(`✓ Moved to ${destDir.split("/").pop()}`);
+      
+      setFolderFiles(prev => prev.filter(f => f.path !== srcPath));
+      setFsTree(prev => {
+        const removeNode = (nodes) => nodes.filter(n => n.path !== srcPath).map(n => ({
+          ...n, children: n.children ? removeNode(n.children) : undefined
+        }));
+        return removeNode(prev);
+      });
+
+      fetchTree();
+      if (selectedPath) selectPath(selectedPath);
+    }).catch(() => toast("Network error executing move"));
+  };
+
+  const handleCutOrCopy = (targetPath, mode) => {
+    setClipboard({ srcPath: targetPath, action: mode });
+    toast(`✓ File ${mode === "cut" ? "cut" : "copied"} to clipboard`);
+  };
+
+  const handlePaste = (targetFolderDirectory) => {
+    if (!clipboard.srcPath) return toast("Clipboard engine is empty.");
+    fetch("/api/file/paste", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ src_path: clipboard.srcPath, dest_dir: targetFolderDirectory, action: clipboard.action })
+    }).then(res => res.json()).then(data => {
+      if (data.error) { toast(`Error: ${data.error}`); } else {
+        toast("✓ Pasted successfully");
+        if (clipboard.action === "cut") {
+          setFolderFiles(prev => prev.filter(f => f.path !== clipboard.srcPath));
+          setFsTree(prev => {
+            const removeNode = (nodes) => nodes.filter(n => n.path !== clipboard.srcPath).map(n => ({
+              ...n, children: n.children ? removeNode(n.children) : undefined
+            }));
+            return removeNode(prev);
+          });
+          setClipboard({ srcPath: null, action: null });
+        }
+        fetchTree();
+        if (selectedPath) selectPath(selectedPath);
+      }
+    }).catch(() => toast("Network error executing paste"));
+  };
+
+  const handleSummarize = async (file) => {
+    if (summarizingPath) return;
+    setSummarizingPath(file.path);
+    try {
+      const res = await fetch('/api/summarize-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath: file.path })
+      });
+      const data = await res.json();
+      if (data.error) {
+        toast(`AI Error: ${data.error}`);
+      } else {
+        setAiSummary({ filename: file.name, content: data.summary });
+      }
+    } catch (err) {
+      toast("Error communicating with AI service.");
+      console.error(err);
+    } finally {
+      setSummarizingPath(null);
+    }
+  };
+
+  const handleCreateItem = (type) => {
+    const name = newItemName.trim();
+    if (!name) { toast("Please provide a name first."); return; }
+    if (!selectedPath) { toast("Select a target directory branch first."); return; }
+
+    fetch("/api/item/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parent_dir: selectedPath, name: name, type: type })
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) { toast(`Error: ${data.error}`); return; }
+        toast(`✓ ${data.message}`);
+        setNewItemName(""); 
+        
+        // Optimistically inject the new folder into the sidebar instantly
+        if (type === 'folder') {
+          const newPath = selectedPath.endsWith('/') ? selectedPath + name : selectedPath + '/' + name;
+          setFsTree(prev => {
+            const addNode = (nodes) => nodes.map(n => {
+              if (n.path === selectedPath) {
+                return { ...n, children: [...(n.children || []), { name: name, path: newPath, children: [] }].sort((a,b) => a.name.localeCompare(b.name)) };
+              }
+              if (selectedPath.startsWith(n.path + "/")) return { ...n, children: addNode(n.children || []) };
+              return n;
+            });
+            return addNode(prev);
+          });
+        }
+        
+        selectPath(selectedPath); 
+        // Wait 400ms to let the Linux I/O buffer clear before pulling the hard confirmation
+        setTimeout(fetchTree, 400);
+      })
+      .catch(() => toast("Failed to synchronize generation pipeline with disk layers"));
+  };
+
+  const displayFiles = getDisplayFiles();
+  const queueEntries = Object.values(dlState).sort((a, b) => (b.added || 0) - (a.added || 0));
+
+  const initResize = (e) => {
+    e.preventDefault(); const startX = e.clientX, startW = treePanelRef.current.offsetWidth;
+    const onMove = mv => { treePanelRef.current.style.width = `${Math.max(200, Math.min(400, startW + mv.clientX - startX))}px`; };
+    const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); document.body.style.cursor = ""; };
+    document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp); document.body.style.cursor = "col-resize";
+  };
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="topbar-left">
+          <div className="wordmark">
+            <img src="croco.png" alt="Croco" style={{ height: 28 }} />
+            CrocoHelms
+          </div>
+          <div className={`status-dot ${onlineStatus}`} title={`Status: ${onlineStatus}`} />
+        </div>
+        <div className="topbar-right">
+          {Object.values(dlState).filter(d => (d.status || "").toLowerCase() === "downloading").map(d => (
+            <DlCard key={d.id} d={d} onCancel={cancelDl} />
+          ))}
+        </div>
+      </header>
+
+      <div className="body">
+        <aside className="sidebar" ref={treePanelRef}>
+          <div className="sidebar-head">
+            <div className="search-wrap">
+              <SvgIcon name="ti-search" className="search-icon" />
+              <input className="sidebar-search" placeholder="Filter paths…" value={treeSearch} onChange={e => setTreeSearch(e.target.value)} />
+            </div>
+          </div>
+          <div className="tree-scroll">
+            {fsTree.map((node) => <TreeNode key={node.path} node={node} depth={0} selectedPath={selectedPath} onSelect={selectPath} searchQuery={treeSearch} onDropFiles={addFilesFromInput} onMoveFile={moveFile} clipboard={clipboard} />)}
+          </div>
+          
+          <div className={`sel-path${selectedPath ? " set" : ""}`}>
+            {selectedPath ? <><SvgIcon name="ti-map-pin" />{selectedPath}</> : null}
+            <button className="icon-btn" onClick={handleRescan} style={{ marginLeft: "auto", color: "black", border: "none", background: "transparent" }}>
+              <SvgIcon name="ti-refresh" style={{ fontSize: "20px" }} />
+            </button>
+          </div>
+          <div className="url-bar" style={{ display: tab === "downloads" ? "flex" : "none" }}>
+            <textarea className="url-input" placeholder={"Paste URLs, one per line…"} value={urlInput} onChange={e => setUrlInput(e.target.value)} rows={3} />
+            <button className="dl-btn" disabled={!selectedPath} onClick={queueDownloads}><SvgIcon name="ti-download" /> Queue Files</button>
+          </div>
+          {/* STORAGE WIDGET */}
+          {storageData && !storageData.error && (
+            <div className="storage-widget">
+              <div className="sw-head">
+                <span className="sw-title"><SvgIcon name="ti-device-floppy" /> Disk Usage</span>
+                <span className="sw-pct">{storageData.percent_used}%</span>
+              </div>
+              <div className="sw-track">
+                <div 
+                  className={`sw-fill ${storageData.percent_used > 90 ? 'critical' : storageData.percent_used > 75 ? 'warn' : ''}`} 
+                  style={{ width: `${storageData.percent_used}%` }} 
+                />
+              </div>
+              <div className="sw-labels">
+                <span>{fmtSz(storageData.used_bytes)} used</span>
+                <span>{fmtSz(storageData.free_bytes)} free</span>
+              </div>
+            </div>
+          )}
+        </aside>
+
+        <div className="resizer" onMouseDown={initResize} />
+
+        <main className="main">
+          <div className="tabs">
+            {[
+              { id: "files", icon: "ti-folder", label: "Files" },
+              { id: "downloads", icon: "ti-download", label: "Downloads" },
+              { id: "uploads", icon: "ti-upload", label: "Uploads" },
+              { id: "ai", icon: "ti-sparkles", label: "Ask AI" } // ◄── ADD THIS LINE
+            ].map(t => (
+              <button key={t.id} className={`tab-btn${tab === t.id ? " active" : ""}`} onClick={() => setTab(t.id)}>
+                <SvgIcon name={t.icon} />
+                {t.label}
+                {t.id === "downloads" && Object.keys(dlState).length > 0 && <span className="tab-badge">{Object.keys(dlState).length}</span>}
+              </button>
+            ))}
+          </div>
+
+          {/* ─── NEW AI ASSISTANT TAB ─── */}
+          {tab === "ai" && (
+            <div className="pane">
+              <div className="pane-head">
+                <span className="pane-title"><SvgIcon name="ti-sparkles" /> Local AI Engine</span>
+              </div>
+              <div className="ai-body">
+                
+                {aiFlowState === 'preflight' && (
+                  <PreFlightCard onAcknowledge={(tier) => {
+                    setSystemTier(tier);
+                    setAiFlowState('install');
+                  }} />
+                )}
+
+                {aiFlowState === 'install' && (
+                  <ModelInstallerCard 
+                    systemTier={systemTier} 
+                    onInstallComplete={() => setAiFlowState('ready')} 
+                  />
+                )}
+
+                {aiFlowState === 'ready' && (
+                  <div className="empty-state" style={{ marginTop: "40px", padding: "32px", background: "var(--bg-active)", borderRadius: "var(--r-md)", border: "1px solid var(--border-soft)" }}>
+                    <SvgIcon name="ti-check" className="empty-icon" style={{ color: "#22c55e" }} />
+                    <p className="empty-title">AI Engine Ready</p>
+                    <p className="empty-sub">Qwen 0.5B is fully installed and loaded locally. You can now use the sparkle icon next to any text/code file in your Workspace to instantly summarize its contents entirely offline.</p>
+                  </div>
+                )}
+                
+              </div>
+            </div>
+          )}
+
+          {tab === "files" && (
+            <div 
+              className="pane"
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (selectedPath) {
+                  e.currentTarget.classList.add("drag-hover");
+                }
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                if (!e.currentTarget.contains(e.relatedTarget)) {
+                  e.currentTarget.classList.remove("drag-hover");
+                }
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.remove("drag-hover");
+                const srcPath = e.dataTransfer.getData("text/plain");
+                if (srcPath && !e.dataTransfer.files?.length) {
+                  if (selectedPath) moveFile(srcPath, selectedPath);
+                } else if (e.dataTransfer.files && e.dataTransfer.files.length) {
+                  if (selectedPath) {
+                    addFilesFromInput(e.dataTransfer.files);
+                  } else {
+                    toast("Select a directory first to drop files");
+                  }
+                }
+              }}
+            >
+              {!selectedPath ? (
+                <div className="empty-state">
+                  <SvgIcon name="ti-folder-open" className="empty-icon" />
+                  <p className="empty-title">Workspace Directory</p>
+                  <p className="empty-sub">Select a directory from the sidebar to browse contents, or tap any file extension target to make lightning modifications.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="files-bar">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div className="history-nav" style={{ display: 'flex', gap: '4px' }}>
+                        <button className="action-btn" onClick={goBack} disabled={historyIndex <= 0} style={{ padding: '6px 10px' }} title="Back"><SvgIcon name="ti-arrow-left" /></button>
+                        <button className="action-btn" onClick={goForward} disabled={historyIndex >= history.length - 1} style={{ padding: '6px 10px' }} title="Forward"><SvgIcon name="ti-arrow-right" /></button>
+                      </div>
+                      <div className="files-path-wrap">
+                        <span className="files-path">{selectedPath}</span>
+                        {!loadingFolder && <span className="files-meta">{folderFiles.filter(f => !f.is_dir).length} files · {fmtSz(folderFiles.reduce((a, c) => a + (c.size || 0), 0))}</span>}
+                      </div>
+                    </div>
+                    <div className="files-actions">
+                      <div className="search-wrap">
+                        <SvgIcon name="ti-search" className="search-icon" />
+                        <input className="files-search" placeholder="Search files…" value={fileSearch} onChange={e => setFileSearch(e.target.value)} />
+                      </div>
+                      <a 
+                        className="action-btn"
+                        style={{ textDecoration: 'none' }}
+                        href={`/api/folder/zip?path=${encodeURIComponent(selectedPath)}`}
+                        onClick={() => toast("Bundling workspace directory architecture into zip format...")}
+                        title="Zip and download this entire directory branch"
+                      >
+                        <SvgIcon name="ti-download" /> Folder
+                      </a>
+                      <button className="action-btn" onClick={selectAll}>All</button>
+                      <button className="action-btn" onClick={deselectAll}>Clear</button>
+                      {clipboard.srcPath && (
+                        <button className="action-btn" onClick={() => handlePaste(selectedPath)}>
+                          <SvgIcon name="ti-clipboard" /> Paste ({clipboard.action})
+                        </button>
+                      )}
+                      <button className="action-btn primary" onClick={downloadSelected} disabled={!selectedFiles.size}><SvgIcon name="ti-download" /> Download</button>
+                      <button className="action-btn" onClick={openZip}><SvgIcon name="ti-archive" /> Zip</button>
+                    </div>
+                  </div>
+
+                  {/* NEW CREATION ACTIONS ROW */}
+                  <div className="creation-toolbar" style={{ padding: "6px 18px", borderBottom: "1px solid #e2e8f0", background: "#f8fafc", display: "flex", gap: "6px", alignItems: "center" }}>
+                    <input 
+                      type="text"
+                      className="files-search" /* Borrows your clean input design styling rules */
+                      placeholder="New file or folder name..."
+                      value={newItemName}
+                      onChange={e => setNewItemName(e.target.value)}
+                      style={{ width: "240px" }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleCreateItem('folder');
+                      }}
+                    />
+                    <button className="action-btn" onClick={() => handleCreateItem('file')} title="Create File">
+                      <SvgIcon name="ti-file-plus" style={{ marginRight: "4px" }} /> + File
+                    </button>
+                    <button className="action-btn" onClick={() => handleCreateItem('folder')} title="Create Folder">
+                      <SvgIcon name="ti-folder-plus" style={{ marginRight: "4px" }} /> + Folder
+                    </button>
+                  </div>
+
+                  {selectedFiles.size > 0 && <div className="selection-bar"><SvgIcon name="ti-check" />{selectedFiles.size} file(s) selected</div>}
+
+                  <div className="table-wrap">
+                    {loadingFolder ? (
+                      <div className="empty-state"><div className="spinner" /></div>
+                    ) : displayFiles.length === 0 ? (
+                      <div className="empty-state"><SvgIcon name="ti-inbox-off" className="empty-icon" /><p className="empty-sub">No items found matching the current filter criteria.</p></div>
+                    ) : (
+                      <table className="ftable">
+                        <thead>
+                          <tr>
+                            <th className="col-check" />
+                            <th className="col-icon" />
+                            <th className={`sortable${sortKey === "name" ? " sorted" : ""}`} onClick={() => toggleSort("name")}>Name</th>
+                            <th className={`sortable${sortKey === "ext" ? " sorted" : ""}`} onClick={() => toggleSort("ext")}>Type</th>
+                            <th className="sortable col-right" onClick={() => toggleSort("size")}>Size</th>
+                            <th className="sortable col-right" onClick={() => toggleSort("mtime")}>Modified</th>
+                            <th className="col-action" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {displayFiles.map((file) => {
+                            const { icon, color } = getExtIcon(file.ext, file.is_dir);
+                            const checked = selectedFiles.has(file.path);
+                            const isEditable = !file.is_dir && ['py','js','ts','jsx','tsx','json','html','css','txt','md','sh','log','csv'].includes(file.ext?.toLowerCase());
+                            const isSummarizable = aiFlowState === 'ready' && isEditable;
+                            return (
+                              <tr key={file.path} className={`draggable-item${checked ? " row-selected" : ""}${clipboard.srcPath === file.path ? (clipboard.action === 'cut' ? ' item-cut' : ' item-copied') : ''}`} 
+                                draggable="true"
+                                data-path={file.path}
+                                onDragStart={e => e.dataTransfer.setData("text/plain", file.path)}
+                                onDragOver={file.is_dir ? e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.add("drag-hover"); } : undefined}
+                                onDragLeave={file.is_dir ? e => { 
+                                  e.preventDefault(); e.stopPropagation(); 
+                                  if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove("drag-hover"); 
+                                } : undefined}
+                                onDrop={file.is_dir ? e => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  e.currentTarget.classList.remove("drag-hover");
+                                  const srcPath = e.dataTransfer.getData("text/plain");
+                                  if (srcPath && !e.dataTransfer.files?.length) moveFile(srcPath, file.path);
+                                } : undefined}
+                                onClick={() => file.is_dir ? selectPath(file.path) : (isEditable ? setEditorPath(file.path) : toggleFile(file.path))}
+                              >
+                                <td className="col-check">
+                                  {!file.is_dir && <input type="checkbox" checked={checked} onChange={() => toggleFile(file.path)} onClick={e => e.stopPropagation()} />}
+                                </td>
+                                <td className="col-icon"><SvgIcon name={icon} style={{ color, fontSize: "18px" }} /></td>
+                                <td className={`col-name${file.is_dir ? " is-dir" : ""}`}>{file.name}</td>
+                                <td className="col-ext">{file.is_dir ? "DIR" : (file.ext || "").toUpperCase()}</td>
+                                <td className="col-size col-right">{file.is_dir ? "—" : file.size_fmt}</td>
+                                <td className="col-mtime col-right">{fmtTime(file.mtime)}</td>
+                                <td className="col-action" onClick={e => e.stopPropagation()}>
+                                  <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                                    {isSummarizable && (
+                                      <button className="ai-btn" onClick={(e) => { e.stopPropagation(); handleSummarize(file); }} disabled={summarizingPath === file.path} title="Summarize file with local AI">
+                                        {summarizingPath === file.path ? (
+                                          <svg className="spinner-svg" fill="none" viewBox="0 0 24 24">
+                                            <circle opacity="0.25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                            <path opacity="0.75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                          </svg>
+                                        ) : (
+                                          <svg xmlns="http://www.w3.org/2000/svg" style={{ height: '14px', width: '14px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L18 14l-6.857 2.286L9 23l-2.286-6.857L0 14l6.857-2.286L9 5z" />
+                                          </svg>
+                                        )}
+                                      </button>
+                                    )}
+                                    <button className="dl-row-btn" onClick={() => handleCutOrCopy(file.path, "cut")} title="Cut">
+                                      <SvgIcon name="ti-cut" />
+                                    </button>
+                                    <button className="dl-row-btn" onClick={() => handleCutOrCopy(file.path, "copy")} title="Copy">
+                                      <SvgIcon name="ti-copy" />
+                                    </button>
+                                    {isEditable && (
+                                      <button className="dl-row-btn" onClick={() => setEditorPath(file.path)} title="Edit File">
+                                        <SvgIcon name="ti-edit" style={{color: 'var(--accent)'}} />
+                                      </button>
+                                    )}
+                                    {!file.is_dir && (
+                                      <a className="dl-row-btn" href={`/api/file?path=${encodeURIComponent(file.path)}`} download={file.name} title="Download">
+                                        <SvgIcon name="ti-download" />
+                                      </a>
+                                    )}
+                                    <button className="dl-row-btn delete-trigger" onClick={() => confirmDelete(file.path)} title="Delete">
+                                      <SvgIcon name="ti-trash" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {tab === "downloads" && (
+            <div className="pane">
+              <div className="pane-head">
+                <span className="pane-title"><SvgIcon name="ti-stack-2" /> Download Queue</span>
+                <span className="pane-count">{queueEntries.length} items</span>
+              </div>
+              <div className="queue-list" style={{ maxWidth: "800px", margin: "0 auto", width: "100%" }}>
+                {queueEntries.length === 0 ? (
+                  <div className="empty-state"><SvgIcon name="ti-cloud-download" className="empty-icon" /><p className="empty-sub">The transfer queue is currently empty.</p></div>
+                ) : queueEntries.map((d) => {
+                    const status = (d.status || "").toLowerCase();
+                    const rawP = parseFloat(d.progress) || 0;
+                    const p = rawP > 1 ? rawP : (rawP > 0 ? rawP * 100 : 0);
+                    const pct = Math.min(100, Math.max(0, Math.round(p)));
+                    return (
+                      <div key={d.id} className={`dl-item status-${status}`}>
+                        <div className="dl-item-left">
+                          <div className="dl-dest"><SvgIcon name="ti-folder" /> {d.dest_path}</div>
+                          <div className="dl-filename">{d.filename}</div>
+                          <div className="dl-url"><SvgIcon name="ti-link" /> {d.url}</div>
+                        </div>
+                        <div className="dl-item-right">
+                          <button className="remove-btn" onClick={() => cancelDl(d.id)}><SvgIcon name="ti-x" /></button>
+                          <span className={`dl-status ${status}`}>{d.status}</span>
+                        </div>
+                        {(status === "downloading" || status === "complete") && (
+                          <div className="dl-prog-wrap">
+                            <div className="dl-prog-bar">
+                                <div className="dl-prog-fill" style={{ width: `${status === "complete" ? 100 : pct}%` }}></div>
+                            </div>
+                            <span className="dl-pct">{status === "complete" ? 100 : pct}%</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                })}
+              </div>
+            </div>
+          )}
+
+          {tab === "uploads" && (
+            <div className="pane">
+              <div className="pane-head"><span className="pane-title"><SvgIcon name="ti-cloud-upload" /> Upload Assets</span></div>
+              <div className="upload-body" style={{ maxWidth: "800px", margin: "0 auto", width: "100%" }}>
+                <div className="drop-zone" onClick={() => fileInputRef.current.click()} onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add("dz-over"); }} onDragLeave={e => { e.preventDefault(); if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove("dz-over"); }} onDrop={e => { e.preventDefault(); e.currentTarget.classList.remove("dz-over"); if (e.dataTransfer.files.length) addFilesFromInput(e.dataTransfer.files); }}>
+                  <SvgIcon name="ti-cloud-upload" className="dz-icon" style={{ fontSize: "48px", color: "var(--text-muted)" }} />
+                  <p className="dz-headline" style={{ fontSize: "16px", fontWeight: 500 }}>Drag and drop files here, or browse:</p>
+                  
+                  {/* Dedicated buttons for File vs Folder selection */}
+                  <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+                    <button className="action-btn" onClick={(e) => { e.stopPropagation(); fileInputRef.current.click(); }}>
+                      <SvgIcon name="ti-file-plus" /> Select Files
+                    </button>
+                    <button className="action-btn" onClick={(e) => { e.stopPropagation(); folderInputRef.current.click(); }}>
+                      <SvgIcon name="ti-folder-plus" /> Select Folder
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Standard flat file input */}
+                <input type="file" multiple ref={fileInputRef} style={{ display: "none" }} onChange={e => addFilesFromInput(e.target.files)} />
+                
+                {/* Recursive directory input */}
+                <input type="file" webkitdirectory="true" directory="true" multiple ref={folderInputRef} style={{ display: "none" }} onChange={e => addFilesFromInput(e.target.files)} />
+                <div className="dest-row" style={{ padding: "16px", background: "var(--bg-active)", borderRadius: "var(--r-md)", border: "1px solid var(--border-soft)" }}>
+                  <label className="dest-label" style={{ fontWeight: 500 }}><SvgIcon name="ti-folder" /> Target Directory</label>
+                  <input className="dest-input" value={uploadDest} onChange={e => setUploadDest(e.target.value)} style={{ background: "var(--bg-base)" }} />
+                </div>
+                
+                {pendingFiles.length > 0 && (
+                  <div className="pending-list" style={{ marginTop: "16px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "8px" }}>QUEUE ({pendingFiles.length})</div>
+                    {pendingFiles.map((f, idx) => {
+                      const { icon, color } = getExtIcon(fileExt(f.name), false);
+                      return (
+                        <div key={f.name} className="pending-item">
+                          <SvgIcon name={icon} style={{ color, fontSize: "20px" }} />
+                          <span className="pending-name">{f.name}</span>
+                          <span className="pending-size">{fmtSz(f.size)}</span>
+                          <button className="remove-btn" onClick={() => removePending(idx)}><SvgIcon name="ti-x" /></button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {pendingFiles.length > 0 && (
+                  <div className="upload-footer" style={{ justifyContent: "flex-end" }}>
+                    <button className="action-btn primary" style={{ padding: "10px 24px", fontSize: "14px" }} disabled={!uploadDest} onClick={startUploads}>
+                      <SvgIcon name="ti-upload" /> Execute Upload
+                    </button>
+                  </div>
+                )}
+
+                {Object.values(ulState).length > 0 && (
+                  <div className="ul-list" style={{ marginTop: "32px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-muted)", marginBottom: "8px" }}>ACTIVE UPLOADS</div>
+                    {Object.values(ulState).map((u) => {
+                      const pct = Math.round((u.progress || 0) * 100);
+                      return (
+                        <div key={u.id} className={`dl-item status-${u.status}`}>
+                          <div className="dl-item-left">
+                            <div className="dl-dest"><SvgIcon name="ti-folder" /> {u.dest_path}</div>
+                            <div className="dl-filename">{u.filename}</div>
+                          </div>
+                          <div className="dl-item-right">
+                            <span className={`dl-status ${u.status}`}>{u.status}</span>
+                          </div>
+                          <div className="dl-prog-wrap">
+                            <div className="dl-prog-bar">
+                              <div className="dl-prog-fill" style={{ width: `${pct}%` }}></div>
+                            </div>
+                            <span className="dl-pct">{pct}%</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* ─── MONACO EDITOR MODAL — rendered as isolated component ─── */}
+      {editorPath && (
+        <EditorModal
+          filePath={editorPath}
+          onClose={() => setEditorPath(null)}
+          toast={toast}
+        />
+      )}
+
+      {zipOpen && (
+        <div className="modal-backdrop" onClick={() => setZipOpen(false)}><div className="modal" onClick={e => e.stopPropagation()}><div className="modal-header"><SvgIcon name="ti-archive" /><span>Package Files</span></div><input className="modal-input" value={zipName} onChange={e => setZipName(e.target.value)} /><div className="modal-actions"><button className="action-btn" onClick={() => setZipOpen(false)}>Cancel</button><button className="action-btn primary" onClick={executeZipAndDownload}>Confirm & Download</button></div></div></div>
+      )}
+
+      {deleteModalOpen && (
+        <div className="modal-backdrop" onClick={() => { setDeleteModalOpen(false); setFileToDelete(""); }}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ color: "#ef4444" }}>
+              <SvgIcon name="ti-trash" />
+              <span>Confirm Deletion</span>
+            </div>
+            <div className="modal-sub">
+              Are you sure you want to permanently delete <strong>{fileToDelete.split('/').pop()}</strong>?<br/>
+              This cannot be undone.
+            </div>
+            <div className="modal-actions">
+              <button className="action-btn" onClick={() => { setDeleteModalOpen(false); setFileToDelete(""); }}>Cancel</button>
+              <button className="action-btn danger" onClick={executeDelete}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {aiSummary && (
+        <div className="modal-backdrop" onClick={() => setAiSummary(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ width: "600px", maxWidth: "90vw" }}>
+            <div className="modal-header">
+              <SvgIcon name="ti-sparkles" style={{ color: "#8b5cf6" }} />
+              <span style={{ fontWeight: 500 }}>AI Summary: {aiSummary.filename}</span>
+            </div>
+            <div className="modal-sub" style={{ maxHeight: "60vh", overflowY: "auto", whiteSpace: "pre-wrap", color: "var(--text-main)", fontSize: "13px", lineHeight: "1.6" }}>
+              {aiSummary.content}
+            </div>
+            <div className="modal-actions">
+              <button className="action-btn primary" onClick={() => setAiSummary(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={`toast${notif.show ? " show" : ""}`}><SvgIcon name="ti-check" />{notif.msg}</div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
