@@ -964,3 +964,70 @@ input, textarea, button { font-family: inherit; color: inherit; }
   flex-direction: column;
   flex: 1;
 }
+
+.ai-provider-card {
+  margin: 0 0 16px;
+  padding: 16px;
+}
+
+.ai-provider-status {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.ai-provider-status.connected { color: #15803d; }
+
+.ai-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ai-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ai-field-wide { grid-column: 1 / -1; }
+.ai-field > span { color: var(--text-muted); font-size: 10px; }
+.ai-field input, .ai-field select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  background: var(--bg-base);
+  color: var(--text-main);
+  font-size: 11px;
+}
+.ai-field input:focus, .ai-field select:focus { outline: none; border-color: var(--border-focus); }
+
+.ai-provider-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+.ai-provider-footer > div { display: flex; gap: 8px; flex-shrink: 0; }
+.ai-provider-footer .action-btn { min-height: 32px; padding: 0 10px; font-size: 10px; }
+
+.ai-provider-ready {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 2px;
+}
+.ai-ready-dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: #22c55e; flex: 0 0 auto; }
+.ai-provider-ready div { display: flex; flex-direction: column; gap: 4px; }
+.ai-provider-ready strong { font-size: 12px; font-weight: 600; }
+.ai-provider-ready span { color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+
+@media (max-width: 520px) {
+  .ai-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .ai-field-wide { grid-column: auto; }
+  .ai-provider-footer { align-items: stretch; flex-direction: column; }
+  .ai-provider-footer > div { justify-content: flex-end; }
+}

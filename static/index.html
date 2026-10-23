@@ -579,6 +579,94 @@ function ModelInstallerCard({ systemTier, onInstallComplete }) {
   );
 }
 
+function AIProviderSettings({ onConfigured, toast }) {
+  const [provider, setProvider] = useState("OpenRouter");
+  const [baseUrl, setBaseUrl] = useState("https://openrouter.ai/api/v1");
+  const [model, setModel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [configured, setConfigured] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/ai-config").then(response => response.json()).then(settings => {
+      setProvider(settings.provider || "OpenRouter");
+      setBaseUrl(settings.base_url || "https://openrouter.ai/api/v1");
+      setModel(settings.model || "");
+      setConfigured(Boolean(settings.configured));
+      onConfigured(Boolean(settings.configured), settings);
+    }).catch(() => toast("Could not load AI provider settings"));
+  }, []);
+
+  const selectProvider = (value) => {
+    setProvider(value);
+    if (value === "OpenRouter") setBaseUrl("https://openrouter.ai/api/v1");
+    if (value === "NVIDIA NIM") setBaseUrl("https://integrate.api.nvidia.com/v1");
+    if (value === "Custom OpenAI-compatible") setBaseUrl("");
+  };
+
+  const saveSettings = async (clearKey = false) => {
+    setSaving(true);
+    try {
+      const response = await fetch("/api/ai-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, base_url: baseUrl, model, api_key: apiKey, clear_key: clearKey })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not save AI settings.");
+      setConfigured(Boolean(result.configured));
+      setApiKey("");
+      onConfigured(Boolean(result.configured), result);
+      toast(clearKey ? "AI API key removed" : "AI provider settings saved");
+    } catch (error) {
+      toast(error.message || "Could not save AI settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="ai-card ai-provider-card">
+      <div className="ai-card-header">
+        <div>
+          <h4 className="ai-card-title">AI provider</h4>
+          <p className="ai-card-sub">{configured ? "Connected provider is used for file summaries" : "Connect an OpenAI-compatible API or use the local model"}</p>
+        </div>
+        <span className={`ai-provider-status${configured ? " connected" : ""}`}>{configured ? "KEY SAVED" : "NOT CONFIGURED"}</span>
+      </div>
+      <div className="ai-form-grid">
+        <label className="ai-field">
+          <span>Provider</span>
+          <select value={provider} onChange={event => selectProvider(event.target.value)}>
+            <option>OpenRouter</option>
+            <option>NVIDIA NIM</option>
+            <option>Custom OpenAI-compatible</option>
+          </select>
+        </label>
+        <label className="ai-field">
+          <span>Model ID</span>
+          <input value={model} onChange={event => setModel(event.target.value)} placeholder="e.g. openai/gpt-4o-mini" />
+        </label>
+        <label className="ai-field ai-field-wide">
+          <span>API base URL</span>
+          <input value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" spellCheck="false" />
+        </label>
+        <label className="ai-field ai-field-wide">
+          <span>API key</span>
+          <input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={configured ? "Saved securely; enter a new key to replace" : "Paste your provider API key"} autoComplete="new-password" />
+        </label>
+      </div>
+      <div className="ai-provider-footer">
+        <span>Key stays on this server and is never sent back to the browser.</span>
+        <div>
+          {configured && <button className="action-btn" onClick={() => saveSettings(true)} disabled={saving}>Remove key</button>}
+          <button className="action-btn primary" onClick={() => saveSettings()} disabled={saving}>{saving ? "Saving..." : "Save provider"}</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const [onlineStatus, setOnlineStatus] = useState("CONNECTING");
   const [config, setConfig] = useState({ downloader: "none", update_token_required: false });
@@ -613,6 +701,8 @@ function App() {
   const [systemTier, setSystemTier] = useState(null);
   const [summarizingPath, setSummarizingPath] = useState(null);
   const [aiSummary, setAiSummary] = useState(null);
+  const [aiProviderConfigured, setAiProviderConfigured] = useState(false);
+  const [aiProviderInfo, setAiProviderInfo] = useState({ provider: "", model: "" });
 
   // editorPath = null means closed, any string means open with that file
   const [editorPath, setEditorPath] = useState(null);
@@ -1188,25 +1278,34 @@ function App() {
           {tab === "ai" && (
             <div className="pane">
               <div className="pane-head">
-                <span className="pane-title"><SvgIcon name="ti-sparkles" /> Local AI Engine</span>
+                <span className="pane-title"><SvgIcon name="ti-sparkles" /> AI settings</span>
               </div>
               <div className="ai-body">
-                
-                {aiFlowState === 'preflight' && (
+                <AIProviderSettings onConfigured={(configured, settings) => {
+                  setAiProviderConfigured(configured);
+                  setAiProviderInfo({ provider: settings.provider || "", model: settings.model || "" });
+                }} toast={toast} />
+
+                {aiProviderConfigured ? (
+                  <div className="ai-provider-ready">
+                    <span className="ai-ready-dot" />
+                    <div><strong>{aiProviderInfo.provider} is active</strong><span>{aiProviderInfo.model} will handle file summaries.</span></div>
+                  </div>
+                ) : aiFlowState === 'preflight' && (
                   <PreFlightCard onAcknowledge={(tier) => {
                     setSystemTier(tier);
                     setAiFlowState('install');
                   }} />
                 )}
 
-                {aiFlowState === 'install' && (
+                {!aiProviderConfigured && aiFlowState === 'install' && (
                   <ModelInstallerCard 
                     systemTier={systemTier} 
                     onInstallComplete={() => setAiFlowState('ready')} 
                   />
                 )}
 
-                {aiFlowState === 'ready' && (
+                {!aiProviderConfigured && aiFlowState === 'ready' && (
                   <div className="empty-state" style={{ marginTop: "40px", padding: "32px", background: "var(--bg-active)", borderRadius: "var(--r-md)", border: "1px solid var(--border-soft)" }}>
                     <SvgIcon name="ti-check" className="empty-icon" style={{ color: "#22c55e" }} />
                     <p className="empty-title">AI Engine Ready</p>

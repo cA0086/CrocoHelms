@@ -13,7 +13,7 @@ import sys
 import threading
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 import urllib.request
 
 import config
@@ -27,6 +27,8 @@ install_status = {"status": "idle", "progress": 0, "error": None}
 UPDATE_LOCK = threading.Lock()
 UPDATE_JOBS = {}
 VERSION_CACHE = {"fetched_at": 0, "data": None}
+AI_SETTINGS_PATH = os.path.join(BASE_DIR, ".ai_provider.json")
+AI_SETTINGS_LOCK = threading.Lock()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = Path(BASE_DIR).parent
@@ -254,6 +256,94 @@ def get_tree(force=False):
             state.cached_tree = build_fs_tree()
         return state.cached_tree
 
+
+def load_ai_settings():
+    try:
+        with AI_SETTINGS_LOCK, open(AI_SETTINGS_PATH, "r", encoding="utf-8") as settings_file:
+            settings = json.load(settings_file)
+        if not isinstance(settings, dict):
+            return {}
+        return {key: str(settings.get(key, "")) for key in ("provider", "base_url", "model", "api_key")}
+    except (OSError, ValueError):
+        return {}
+
+
+def public_ai_settings():
+    settings = load_ai_settings()
+    return {
+        "provider": settings.get("provider", ""),
+        "base_url": settings.get("base_url", ""),
+        "model": settings.get("model", ""),
+        "configured": bool(settings.get("api_key") and settings.get("model") and settings.get("base_url")),
+    }
+
+
+def save_ai_settings(payload):
+    current = load_ai_settings()
+    provider = str(payload.get("provider", "")).strip()[:80]
+    base_url = str(payload.get("base_url", "")).strip().rstrip("/")
+    model = str(payload.get("model", "")).strip()[:200]
+    api_key = str(payload.get("api_key", "")).strip()
+    if len(api_key) > 4096:
+        raise ValueError("API key is too long.")
+    if payload.get("clear_key"):
+        api_key = ""
+    elif not api_key:
+        api_key = current.get("api_key", "")
+
+    if base_url:
+        parsed = urlsplit(base_url)
+        local_http = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        if parsed.scheme != "https" and not (parsed.scheme == "http" and local_http):
+            raise ValueError("Use an HTTPS API URL, or HTTP only for a localhost endpoint.")
+        if not parsed.netloc:
+            raise ValueError("Enter a valid API base URL.")
+    if api_key and (not provider or not base_url or not model):
+        raise ValueError("Provider, API base URL, and model are required when saving an API key.")
+
+    settings = {"provider": provider, "base_url": base_url, "model": model, "api_key": api_key}
+    with AI_SETTINGS_LOCK:
+        temp_path = AI_SETTINGS_PATH + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as settings_file:
+            json.dump(settings, settings_file)
+        try:
+            os.chmod(temp_path, 0o600)
+        except OSError:
+            pass
+        os.replace(temp_path, AI_SETTINGS_PATH)
+    return public_ai_settings()
+
+
+def summarize_with_provider(settings, content):
+    base_url = settings["base_url"].rstrip("/")
+    endpoint = base_url if base_url.endswith("/chat/completions") else base_url + "/chat/completions"
+    payload = {
+        "model": settings["model"],
+        "messages": [{"role": "user", "content": f"Summarize this file clearly and concisely:\n\n{content}"}],
+        "temperature": 0.2,
+    }
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {settings['api_key']}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        return result["choices"][0]["message"]["content"]
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(2048).decode("utf-8", errors="replace")
+        try:
+            error_payload = json.loads(detail)
+            detail = error_payload.get("error", {}).get("message", detail)
+        except (ValueError, AttributeError):
+            pass
+        detail = detail.replace(settings["api_key"], "[redacted]")
+        raise RuntimeError(f"AI provider returned HTTP {exc.code}: {detail[:500]}") from exc
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise RuntimeError("AI provider returned an unexpected response format.") from exc
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         """Suppress default HTTP logging to keep console clean."""
@@ -338,6 +428,9 @@ class Handler(BaseHTTPRequestHandler):
                 "downloader": config.DOWNLOADER or "none",
                 "update_token_required": bool((config.UPDATE_TOKEN or "").strip())
             })
+
+        elif p == "/api/ai-config":
+            self._json(public_ai_settings())
 
         elif p == "/api/scan":
             self._json({"tree": get_tree()})
@@ -458,7 +551,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # 3. Now it is safe to query 'body' for any of these targets
-        if p == "/api/edit/read":
+        if p == "/api/ai-config":
+            try:
+                self._json(save_ai_settings(body))
+            except ValueError as exc:
+                self._json({"error": str(exc)}, 400)
+            except OSError as exc:
+                self._json({"error": f"Could not save AI settings: {exc}"}, 500)
+            return
+
+        elif p == "/api/edit/read":
             path = body.get("path", "").strip()
             if not path:
                 self._json({"error": "No path provided."}, 400)
@@ -642,18 +744,20 @@ class Handler(BaseHTTPRequestHandler):
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read(2000) # Read first 2000 characters for token safety
                     
-                # Context guard if model isn't downloaded yet
-                if not os.path.exists(MODEL_PATH):
-                    self._json({"error": "Model not installed. Please use diagnostics panel to install Qwen 0.5B."}, 400)
-                    return
-
-                try:
-                    from llama_cpp import Llama
-                    llm = Llama(model_path=MODEL_PATH, verbose=False)
-                    response = llm.create_chat_completion(messages=[{"role": "user", "content": f"Summarize this:\n{content}"}])
-                    summary = response["choices"][0]["message"]["content"]
-                except ImportError:
-                    summary = f"Simulated summary for {os.path.basename(file_path)} using local Qwen 0.5B. (llama-cpp-python not installed)"
+                ai_settings = load_ai_settings()
+                if ai_settings.get("api_key") and ai_settings.get("model") and ai_settings.get("base_url"):
+                    summary = summarize_with_provider(ai_settings, content)
+                else:
+                    if not os.path.exists(MODEL_PATH):
+                        self._json({"error": "Configure an AI API provider or install the local Qwen model first."}, 400)
+                        return
+                    try:
+                        from llama_cpp import Llama
+                        llm = Llama(model_path=MODEL_PATH, verbose=False)
+                        response = llm.create_chat_completion(messages=[{"role": "user", "content": f"Summarize this:\n{content}"}])
+                        summary = response["choices"][0]["message"]["content"]
+                    except ImportError:
+                        summary = f"Simulated summary for {os.path.basename(file_path)} using local Qwen 0.5B. (llama-cpp-python not installed)"
                     
                 self._json({"summary": summary})
             except Exception as e:
