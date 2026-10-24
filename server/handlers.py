@@ -27,10 +27,10 @@ install_status = {"status": "idle", "progress": 0, "error": None}
 UPDATE_LOCK = threading.Lock()
 UPDATE_JOBS = {}
 VERSION_CACHE = {"fetched_at": 0, "data": None}
-AI_SETTINGS_PATH = os.path.join(BASE_DIR, ".ai_provider.json")
 AI_SETTINGS_LOCK = threading.Lock()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+AI_SETTINGS_PATH = os.path.join(BASE_DIR, ".ai_provider.json")
 REPO_DIR = Path(BASE_DIR).parent
 MODELS_DIR = os.path.join(BASE_DIR, "vm_manager", "models")
 MODEL_PATH = os.path.join(MODELS_DIR, "qwen2.5-0.5b-instruct-q4_k_m.gguf")
