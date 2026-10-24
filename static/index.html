@@ -1007,6 +1007,25 @@ function App() {
       }).catch((e) => toast("Zip error: " + e.message));
   };
 
+  const extractSelectedZip = async () => {
+    const archivePath = [...selectedFiles][0];
+    if (!archivePath || !selectedPath) return;
+    try {
+      const response = await fetch("/api/unzip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archive_path: archivePath, destination_path: selectedPath })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Extraction failed");
+      toast(`✓ ${result.message}`);
+      selectPath(selectedPath, true);
+      fetchTree();
+    } catch (error) {
+      toast("Extract error: " + error.message);
+    }
+  };
+
   const downloadSelected = () => {
     if (!selectedFiles.size) return;
     selectedFiles.forEach((p) => {
@@ -1389,6 +1408,7 @@ function App() {
                       )}
                       <button className="action-btn primary" onClick={downloadSelected} disabled={!selectedFiles.size}><SvgIcon name="ti-download" /> Download</button>
                       <button className="action-btn" onClick={openZip}><SvgIcon name="ti-archive" /> Zip</button>
+                      <button className="action-btn" onClick={extractSelectedZip} disabled={selectedFiles.size !== 1 || ![...selectedFiles][0]?.toLowerCase().endsWith(".zip")} title="Extract the selected ZIP into this folder"><SvgIcon name="ti-file-zip" /> Extract</button>
                     </div>
                   </div>
 

@@ -593,6 +593,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": f"Failed to save changes: {str(e)}"}, 500)
             return
 
+        elif p == "/api/unzip":
+            archive_path = body.get("archive_path", "").strip()
+            destination_path = body.get("destination_path", "").strip()
+            from core.zipper import extract_zip_archive
+            result, code = extract_zip_archive(archive_path, destination_path)
+            self._json(result, code)
+            return
+
         elif p == "/api/zip":
             paths = body.get("paths", [])
             zip_name = body.get("name", "archive.zip")
